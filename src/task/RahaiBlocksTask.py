@@ -88,9 +88,17 @@ class RahaiBlocksTask(BaseTask):
                 return stages
         raise RuntimeError("无法定位到拉海洛方块关卡列表起点。")
 
+    def _go_now_button(self):
+        # 通关后游戏可能退回活动主页, 只有「立即前往」能回到关卡列表。
+        return self.ocr(.25, .45, 1.0, .98, match="立即前往")
+
     def _return_to_list(self):
         if self._stage_details():
             self.click(.942, .06, after_sleep=.45)
+        go_now = self.wait_until(self._go_now_button, time_out=3)
+        if go_now:
+            self.log_info("退回了活动主页，点击「立即前往」返回关卡列表。")
+            self.click(go_now[0], after_sleep=.8)
         stages = self.wait_until(self._stage_list, time_out=5)
         if not stages:
             raise RuntimeError("挑战结束后无法返回关卡列表。")
@@ -151,8 +159,14 @@ class RahaiBlocksTask(BaseTask):
             self._leave_challenge()
             raise
         self.click(.5, .88, after_sleep=.6)
-        if not self.wait_until(self._stage_details, time_out=5):
-            raise RuntimeError("领取奖励后无法识别关卡详情。")
+        if not self.wait_until(self._stage_details, time_out=3):
+            # 通关结算后游戏可能直接退回活动主页而不是关卡详情。
+            go_now = self.wait_until(self._go_now_button, time_out=4)
+            if go_now:
+                self.log_info("通关后退回了活动主页，点击「立即前往」返回关卡列表。")
+                self.click(go_now[0], after_sleep=.8)
+            elif not self.wait_until(self._stage_list, time_out=3):
+                raise RuntimeError("领取奖励后无法识别关卡详情。")
         self.log_info(f"已通关：{title.name} · {difficulty}")
 
     def run(self):
@@ -230,17 +244,28 @@ class RahaiBlocksTask(BaseTask):
     def _reward(self):
         return self.ocr(.36, .216, .64, .29, match=re.compile(r"^获\s*得$"))
 
-    def _ready_board(self):
+    def _help_popup(self):
         # The first score challenge includes a manual and three guided clicks.
         # 数据损坏/故障/爆炸方块 are the 3.8 逆转 tutorial pager pages.
-        help_page = self.ocr(.05, .28, .32, .35,
-                             match=re.compile(r"积分模式|奖章模式|数据损坏方块|故障方块|爆炸方块"))
-        if help_page:
-            confirm = self.ocr(.41, .88, .59, .95, match="确认")
-            if confirm:
-                self.click(confirm[0], after_sleep=.5)
-            elif self.ocr(.38, .90, .62, .96, match=re.compile(r"切换至最后一页")):
-                self.click(.75, .805, after_sleep=.5)
+        return self.ocr(.05, .28, .32, .35,
+                        match=re.compile(r"积分模式|奖章模式|数据损坏方块|故障方块|爆炸方块"))
+
+    def _close_help_popup(self):
+        """关闭玩法说明弹窗: 先点右上角 X, 无效再用「确认」/跳转最后一页兜底。返回是否处理过弹窗。"""
+        if not self._help_popup():
+            return False
+        self.click(.960, .210, after_sleep=.6)
+        if not self._help_popup():
+            return True
+        confirm = self.ocr(.41, .88, .59, .95, match="确认")
+        if confirm:
+            self.click(confirm[0], after_sleep=.6)
+        elif self.ocr(.38, .90, .62, .96, match=re.compile(r"切换至最后一页")):
+            self.click(.75, .805, after_sleep=.5)
+        return True
+
+    def _ready_board(self):
+        if self._close_help_popup():
             return False
 
         for region, hint, target in (
@@ -333,6 +358,10 @@ class RahaiBlocksTask(BaseTask):
             if not board:
                 if self.wait_until(self._reward, time_out=3):
                     return
+                # 挑战中游戏可能弹出玩法说明(如故障方块介绍), 关闭后棋盘恢复。
+                if self.wait_until(self._close_help_popup, time_out=2):
+                    self.sleep(.5)
+                    continue
                 raise ChallengeFailed("棋盘消失，未确认通关。")
             if not self._clickable(interaction):
                 raise RuntimeError("Game lost foreground focus; no further moves were sent.")
