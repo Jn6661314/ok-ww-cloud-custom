@@ -94,3 +94,17 @@
 - **玩法说明弹窗（如"1 级故障方块"）不会关闭**：
   - 抽出 `_close_help_popup()`：检测到说明弹窗后先点右上角 X（归一化坐标 0.960/0.210），无效再依次用「确认」按钮、"切换至最后一页"跳转兜底。
   - 挑战过程中弹出的说明弹窗（如故障方块首次出现时）此前会导致"棋盘消失"误报，现在下棋循环中检测到弹窗会自动关闭并继续。
+
+## 十一、2026-11-23 上游 PR 提交情况
+
+本仓库的定制改动已按主题拆分为 4 个互相独立、可单独合并的上游 PR（均通过 CI，SonarCloud Quality Gate OK）：
+
+- **[ok-wuthering-waves #1873](https://github.com/ok-oldking/ok-wuthering-waves/pull/1873)**：云鸣潮支持与多账号 Cookie 隔离（对应本仓库第一~八章内容：`CloudDailyTask`、`CloudMultiAccountTask`、云账号切换/恢复等 13 个文件）。
+- **[ok-wuthering-waves #1874](https://github.com/ok-oldking/ok-wuthering-waves/pull/1874)**：拉海洛方块·逆转的故障方块支持（`rahai_blocks.py` 视觉识别与消除语义、`RahaiBlocksTask.py` 接入、`tests/TestRahaiFaults.py` 单测，对应第九章第一部分）。
+- **[ok-script #130](https://github.com/ok-oldking/ok-script/pull/130)**：云鸣潮 UID 遮罩（`ok/device/capture_methods/browser.py` 的 `cover_uid` 配置与遮罩层注入，对应第九章第二部分）。UID 遮罩所属的 `browser.py` 是 ok-script 包文件（ok-ww 仓库本身不含 `ok/` 目录），故提到 ok-script。
+- **[ok-script #131](https://github.com/ok-oldking/ok-script/pull/131)**：浏览器捕获的每账号独立 profile、登录态持久化与后台输入伪装（`user_data_dir` 配置支持路径/可调用对象 + `OK_WW_CLOUD_PROFILE` 环境变量兜底；关闭前保存 `storage_state.json`、启动时恢复 cookies 与 localStorage；`background_input` 后台输入伪装，默认开启）。这是第一~二章云多账号 Cookie 隔离在 ok-script 侧的配套改动。
+
+说明：
+
+- 四个 PR 互不依赖；#130 与 #131 都改 `browser.py`，先合并者另一方需 rebase（改动区域不同，冲突易解）。
+- 在 PR 被合并前，上述能力仍以本仓库快照形式提供（`ok/device/capture_methods/browser.py` 即含 UID 遮罩、账号 profile、后台输入三块补丁的完整定制版，`restore.py` / `一键恢复.bat` 会把它恢复到 ok-script 安装位置）。
