@@ -26,9 +26,13 @@
 - 任务出错自动恢复：优先重启浏览器并重跑，失败再回退刷新页面
 - 进入游戏分级冷却，解决"要点两次开始游戏"；进入完成检测；邮箱奖励误判月卡的死循环修复
 - 拉海洛方块云游戏浏览器模式适配；先约电台唤起修复；每日活跃度多次识别
+- **拉海洛方块·逆转支持"故障方块"新机制**（1/2 级故障自动识别，参与凑行消除但留在棋盘上）
+- **云鸣潮 UID 遮罩**：自动盖住右下角 UID 区域（CDP 截图同样遮挡，`cover_uid` 可关闭）
+- 拉海洛通关后退回活动主页自动点「立即前往」返回关卡列表；玩法说明弹窗（如"1 级故障方块"）自动点右上角 X 关闭，不再误报中断
 - 多账号配置持久化修复（排队/重启后保存不丢失、配置文件损坏自动回退备份）
 - 从上游历史恢复 **角色代码（编队自定义轴）** 页面与 **队伍创意工坊**（含离线快照）
 - "刷梦魇巢穴 / 4C"由配置复选框自行决定（默认开启），不再强制关闭
+- 部分改动已按主题拆分提交**上游 PR**：[ok-wuthering-waves #1873](https://github.com/ok-oldking/ok-wuthering-waves/pull/1873)（云鸣潮多账号）、[#1874](https://github.com/ok-oldking/ok-wuthering-waves/pull/1874)（故障方块）、[ok-script #130](https://github.com/ok-oldking/ok-script/pull/130)（UID 遮罩）、[#131](https://github.com/ok-oldking/ok-script/pull/131)（账号 profile/登录态/后台输入），均通过 CI 与 SonarCloud Quality Gate；合并前本仓库仍是完整可用的快照
 
 详细的逐项更新说明见 [`CHANGES.md`](CHANGES.md)。
 
