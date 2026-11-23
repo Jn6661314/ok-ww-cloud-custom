@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 运行时数据 / 登录态 / 个人配置：绝不允许提交
+configs/
+data/
+cloud_profiles/
+*.storage_state.json
+storage_state.json
+MultiAccountConfig.json
+MultiAccountResults.json
+devices.json
+*.cookie
+*.log
+
+# 工坊代码包体积较大，按需用 tools/download_workshop_cache.py 拉取
+workshop_cache/codes/
+
+.idea/
+.vscode/
+.DS_Store
