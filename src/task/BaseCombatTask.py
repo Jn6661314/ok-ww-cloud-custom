@@ -1148,10 +1148,11 @@ class BaseCombatTask(CombatCheck):
         if self.get_current_char().ring_index < 0:
             box = self.get_con_box()
 
+            tolerance = cloud_con_tolerance(self)
             best_index = 0
             best_percentage = 0
             for i in range(len(con_colors)):
-                percent = self.calculate_color_percentage(con_colors[i], box)
+                percent = self.calculate_color_percentage(widen_color_range(con_colors[i], tolerance), box)
                 if percent > best_percentage:
                     best_percentage = percent
                     best_index = i
@@ -1184,10 +1185,11 @@ class BaseCombatTask(CombatCheck):
         target_index = self._ensure_ring_index()
 
         cropped = box.crop_frame(self.frame)
+        tolerance = cloud_con_tolerance(self)
         for i in range(len(con_colors)):
             if target_index != -1 and i != target_index:
                 continue
-            color_range = con_colors[i]
+            color_range = widen_color_range(con_colors[i], tolerance)
             area, is_full = self.count_rings(cropped, color_range,
                                              1500 / 3840 / 2160 * self.screen_width * self.screen_height)
             if is_full:
@@ -1355,6 +1357,34 @@ con_colors = [  # 不同角色属性的协奏值能量环的颜色范围列表�
         'b': (145, 175)  # Blue range
     }
 ]
+
+# 云鸣潮(浏览器)抓的是 WebRTC 视频流, 4:2:0 色度抽稀 + 有损压缩会让协奏环颜色偏移,
+# 原本只有约 30 宽的 RGB 区间极易漏检/误检 -> 协奏值算错 -> intro 预判错 -> 乱切人。
+# 云模式对每个通道区间向外放宽 CLOUD_CON_COLOR_TOLERANCE, 本地客户端保持原样(零影响)。
+# 若按实际云游戏截图校准, 调整该常量即可(数值越大越宽松, 但过大会让相邻属性混淆)。
+CLOUD_CON_COLOR_TOLERANCE = 10
+
+
+def widen_color_range(color_range, tolerance):
+    """把颜色区间每个通道向外放宽 tolerance (clamp 到 0..255), 返回新字典。"""
+    if not tolerance:
+        return color_range
+    widened = {}
+    for channel, (low, high) in color_range.items():
+        widened[channel] = (max(0, low - tolerance), min(255, high + tolerance))
+    return widened
+
+
+def cloud_con_tolerance(task):
+    """仅云游戏浏览器模式返回颜色容差, 其余情况返回 0 (不改变原有识别行为)。"""
+    executor = getattr(task, '_executor', None) or getattr(task, 'executor', None)
+    if executor is None:
+        return 0
+    try:
+        return CLOUD_CON_COLOR_TOLERANCE if task.is_browser() else 0
+    except Exception:
+        return 0
+
 
 con_templates = [  # 协奏值能量环的模板名称列表 (对应 `con_colors`)。
     'con_spectro',

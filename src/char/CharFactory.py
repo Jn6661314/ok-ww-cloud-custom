@@ -202,7 +202,12 @@ def get_char_by_pos(task, box, index, old_char):
         char = _find_registered_char(task, box, info)
         if char:
             cls = info.get('cls')
-            if not isinstance(old_char, cls):
+            # 工坊自定义角色类是内置类的"兄弟"类(同名、都直接继承 BaseChar), 不是内置类的子类。
+            # isinstance(old_char, cls) 对自定义实例恒为 False, 会把工坊代码误判成"角色变了",
+            # 每轮用内置类重建, 导致工坊自定义战斗逻辑/切人优先级全部丢失(云模式下识别抖动更频繁)。
+            # 改为按类名判断: 自定义类与内置类同名 -> 保留旧实例(保住工坊代码);
+            # 真正换角色时类名不同 -> 仍走重建分支。
+            if old_char.name != cls.__name__:
                 return _apply_char_config(task, cls(task, index, char_name=info['canonical_name'],
                                                     confidence=char.confidence,
                                                     ring_index=info.get('ring_index', -1),
@@ -230,32 +235,67 @@ def get_char_by_pos(task, box, index, old_char):
 
 
 def apply_team_char_classes(task, chars):
-    """Apply custom code only after the complete three-character team is known."""
+    """Apply custom code only after the complete three-character team is known.
+
+    Cloud/browser capture is a compressed video stream, so a single avatar can
+    fail recognition on some frames.  The old "all or nothing" behaviour meant one
+    unknown avatar stripped the workshop code (and its char_type / switch priority)
+    from the whole team, which showed up as "workshop parameters ignored" and
+    erratic switching.  Remember the last known identity of each slot and use it
+    to fill a transient gap, while still applying custom classes to the slots
+    that were recognised.
+    """
     if len(chars) != 3 or any(char is None for char in chars):
         return chars
     infos = [char_dict.get(char.char_name) for char in chars]
-    if any(info is None for info in infos):
+
+    # {index: (canonical_name, builtin_cls)} from the last fully recognised frame.
+    cache = getattr(task, '_team_char_identity_cache', {}) or {}
+
+    # Resolve each slot's identity; fall back to the cached one on a bad frame.
+    identities = []
+    for index, info in enumerate(infos):
+        if info is not None:
+            identities.append((info['canonical_name'], info['cls']))
+        elif index in cache:
+            identities.append(cache[index])
+        else:
+            identities.append(None)
+
+    # Without a complete, distinct three-character team there is no safe team key.
+    if any(identity is None for identity in identities):
         return chars
-    builtin_classes = [info['cls'] for info in infos]
+    builtin_classes = [builtin_cls for _, builtin_cls in identities]
+    if len({builtin_cls.__name__ for builtin_cls in builtin_classes}) != 3:
+        return chars
     try:
         team = normalize_team(builtin_classes)
     except ValueError:
         return chars
-    for index, (char, builtin_cls) in enumerate(zip(chars, builtin_classes)):
+
+    new_cache = {}
+    for index, (char, (canonical_name, builtin_cls)) in enumerate(zip(chars, identities)):
+        info = infos[index]
         desired_cls = load_team_char_class(builtin_cls, team)
-        if type(char) is desired_cls:
+        if info is not None and type(char) is desired_cls:
+            new_cache[index] = (canonical_name, builtin_cls)
             continue
         replacement = desired_cls(
             task,
             char.index,
-            char_name=char.char_name,
+            char_name=canonical_name,
             confidence=char.confidence,
             ring_index=char.ring_index,
             char_type=char.char_type,
             buff_time=char.buff_time,
         )
         replacement.__dict__.update(char.__dict__)
+        # A recovered slot may carry a stale/unknown identity from the bad frame;
+        # restore the resolved canonical name so later lookups keep working.
+        replacement.char_name = canonical_name
         chars[index] = replacement
+        new_cache[index] = (canonical_name, builtin_cls)
+    task._team_char_identity_cache = new_cache
     return chars
 
 
