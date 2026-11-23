@@ -64,6 +64,31 @@ OK_BACKGROUND_JS = '''() => {
   return true;
 }'''
 
+# OK-WW UID COVER: mask the bottom-right corner where the game shows the UID,
+# mirroring the PC overlay (ok.ui.qt.debug.OverlayWidget.paint_uid_cover:
+# bottom-right 13% x 2.5%). The bar is pointer-events:none so clicks pass
+# through, and add_init_script re-applies it after every navigation.
+OK_UID_COVER_JS = '''() => {
+  if (document.getElementById('ok-uid-cover')) return true;
+  var install = function () {
+    if (document.getElementById('ok-uid-cover')) return;
+    var div = document.createElement('div');
+    div.id = 'ok-uid-cover';
+    div.style.cssText = 'position:fixed;right:0;bottom:0;width:13vw;height:2.5vh;'
+        + 'background:#000;z-index:2147483647;pointer-events:none;';
+    (document.body || document.documentElement).appendChild(div);
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', install);
+    document.addEventListener('readystatechange', function () {
+      if (document.readyState !== 'loading') install();
+    });
+  } else {
+    install();
+  }
+  return true;
+}'''
+
 
 class BrowserCaptureMethod(BaseCaptureMethod):
     name = "Browser Capture"
@@ -191,6 +216,10 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         if background_input:
             # OK-WW BACKGROUND INPUT PATCH: keep the cloud game accepting input when unfocused.
             await self.browser.add_init_script(script=f'({OK_BACKGROUND_JS})()')
+        cover_uid = self.config.get('cover_uid', True)
+        if cover_uid:
+            # OK-WW UID COVER PATCH: hide the bottom-right UID region (cloud WW).
+            await self.browser.add_init_script(script=f'({OK_UID_COVER_JS})()')
 
         await asyncio.sleep(0.1)
 

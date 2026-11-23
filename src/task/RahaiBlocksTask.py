@@ -232,7 +232,9 @@ class RahaiBlocksTask(BaseTask):
 
     def _ready_board(self):
         # The first score challenge includes a manual and three guided clicks.
-        help_page = self.ocr(.05, .28, .32, .35, match=re.compile(r"积分模式|奖章模式|数据损坏方块"))
+        # 数据损坏/故障/爆炸方块 are the 3.8 逆转 tutorial pager pages.
+        help_page = self.ocr(.05, .28, .32, .35,
+                             match=re.compile(r"积分模式|奖章模式|数据损坏方块|故障方块|爆炸方块"))
         if help_page:
             confirm = self.ocr(.41, .88, .59, .95, match="确认")
             if confirm:
@@ -346,9 +348,10 @@ class RahaiBlocksTask(BaseTask):
                 continue
             misses = 0
             rejected.clear()
-            expected, lines = clear_lines(board.mask | move.mask, board.fixed)
+            expected, lines = clear_lines(board.mask | move.mask, board.fixed, board.fault)
             self.log_info(f"Rahai Blocks: slot={move.slot + 1}, rotation={move.turns * 90}, "
-                          f"cell=({move.row + 1},{move.col + 1}), lines={lines}")
+                          f"cell=({move.row + 1},{move.col + 1}), lines={lines}, "
+                          f"fault={board.fault.bit_count()}")
             self.sleep(.95 if lines else .38)
             for _ in range(4):
                 self.next_frame()
@@ -359,7 +362,10 @@ class RahaiBlocksTask(BaseTask):
             else:
                 if lines and self.wait_until(self._reward, time_out=3):
                     return
+                if not actual:
+                    raise ChallengeFailed("落块后棋盘无法识别。")
+                # 故障解除后方块残留、爆炸方块引爆都会让实际棋盘偏离预测;
+                # 以重新读到的棋盘为准继续, 不中断挑战。
                 self.log_warning(f"Rahai Blocks: expected={expected:#018x}, "
-                                 f"actual={hex(actual.mask) if actual else 'unrecognized'}")
-                raise ChallengeFailed("落块后棋盘与预期状态不符。")
+                                 f"actual={actual.mask:#018x}; continuing from the observed board")
         raise ChallengeFailed("达到落块次数上限，未确认通关。")
