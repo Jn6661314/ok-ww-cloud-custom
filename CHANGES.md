@@ -108,3 +108,13 @@
 
 - 四个 PR 互不依赖；#130 与 #131 都改 `browser.py`，先合并者另一方需 rebase（改动区域不同，冲突易解）。
 - 在 PR 被合并前，上述能力仍以本仓库快照形式提供（`ok/device/capture_methods/browser.py` 即含 UID 遮罩、账号 profile、后台输入三块补丁的完整定制版，`restore.py` / `一键恢复.bat` 会把它恢复到 ok-script 安装位置）。
+
+## 十二、2026-11-23 新增：本地安卓模拟器（ADB）设备入口
+
+- `config.py` 新增 `adb` 配置节，设备选择列表里会出现已安装的安卓模拟器（如 MuMuPlayer 12）与 USB / 无线 ADB 设备：
+  - `packages` 同时包含国服 `com.kurogame.mingchao` 与国际服 `com.kurogame.wutheringwaves`，框架按实际安装的游戏自动选择并拉到前台。
+  - `capture_method` 默认 `'adb'`（通用截图，后台可用但约 300ms/帧）；**MuMuPlayer 12 用户可在设备连接弹窗的"捕获方式"里切换到 `Ipc`**，走模拟器原生截图通道，速度快得多。
+  - 点击方式为框架自带的 `ADBInteraction`（`adb input` / 可选 uiautomator2），无需改动任务代码。
+- 运行环境需要 `adbutils`（安装版 Python 自带环境如缺失，执行 `python -m pip install adbutils`）；adb.exe 由 adbutils 自带，无需单独安装 Android SDK。
+- 实测：本机已装的 MuMuPlayer-15.0-0（`127.0.0.1:16384`）能被设备管理器正确识别，模拟器开机后即可连接。
+- 注：这是"多一个设备入口"，任务里的浏览器/PC 专用判断逻辑未改动；ADB 设备上的完整任务流程（尤其实时战斗循环）请自行实测。

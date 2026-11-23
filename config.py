@@ -9,7 +9,7 @@ from src.game_launcher import get_game_launch_arguments
 from src.task.process_feature import process_feature
 from src.task.task_icons import task_icon
 
-version = "dev"
+version = "v3.8.9"
 
 
 def _find_most_recently_run_pc_exe():
@@ -228,6 +228,12 @@ config = {
         'check_auto_hdr': True,
         'check_night_light': True,
         'force_no_night_light': False,
+    },
+    # 本地安卓模拟器入口（MuMu/雷电等）：ADB 设备会出现在设备选择列表，
+    # 截图通道可在连接弹窗里选 "ADB"（通用，后台可用但较慢）或 "Ipc"（MuMu 12，快）。
+    'adb': {
+        'packages': ['com.kurogame.mingchao', 'com.kurogame.wutheringwaves'],  # 国服 / 国际服
+        'capture_method': 'adb',  # 默认 ADB；MuMu 12 用户可在设备菜单切换 Ipc
     },
     'browser': {
         'url': 'https://mc.kurogames.com/cloud/#/',
