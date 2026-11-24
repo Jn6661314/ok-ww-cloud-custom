@@ -1,5 +1,6 @@
 import os
 import re
+import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -212,6 +213,44 @@ class DeviceManager:
         except Exception as e:
             logger.error(f"adb connect error return none {addr}", e)
 
+    def adb_connect_bridge_fallback(self, emulator):
+        """MuMu 网桥(bridge)模式回退: 127.0.0.1:adb_port 无人监听时,
+        从 ARP 表发现虚拟机的局域网 IP, 尝试其 5555/16384 adb 端口。
+
+        MuMu 15 开启网桥后, 模拟器获得独立局域网 IP 且 NAT 端口转发不生效,
+        adb 必须连 `<vm_ip>:5555`。IP 由 DHCP 分配、每次开机可能变化,
+        因此每次 refresh 时动态发现, 不落盘。
+        """
+        name_and_path = f"{getattr(emulator, 'name', '')} {getattr(emulator, 'path', '')}".lower()
+        if 'mumu' not in name_and_path:
+            return None
+        try:
+            import subprocess
+            out = subprocess.run(['arp', '-a'], capture_output=True, text=True,
+                                 timeout=10, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0).stdout
+            candidates = []
+            for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+)', out):
+                ip = m.group(1)
+                if (ip.startswith('127.') or ip.startswith('224.') or ip.startswith('239.')
+                        or ip.endswith('.255') or ip in candidates):
+                    continue
+                candidates.append(ip)
+            for ip in candidates:
+                for port in (5555, 16384):
+                    try:
+                        with socket.create_connection((ip, port), timeout=0.4):
+                            pass
+                    except OSError:
+                        continue
+                    serial = f'{ip}:{port}'
+                    device = self.adb_connect(serial)
+                    if device is not None:
+                        logger.info(f'MuMu bridge adb discovered {serial} for {emulator.name}')
+                        return device
+        except Exception as e:
+            logger.error(f'MuMu bridge adb fallback error', e)
+        return None
+
     def get_devices(self):
         devices = list(self.device_dict.values())
         def sort_key(d):
@@ -380,6 +419,10 @@ class DeviceManager:
                 logger.debug(f"refresh current only skip others {preferred['imei']} != {emulator.name}")
                 return None
             adb_device = self.adb_connect(emulator.serial)
+            if adb_device is None:
+                # MuMu 网桥(bridge)模式下 NAT 的 127.0.0.1:port 不会被监听,
+                # adb 端口挂在虚拟机自己的局域网 IP 上, 需要自动发现。
+                adb_device = self.adb_connect_bridge_fallback(emulator)
             if adb_device is not None:
                 adb_width, adb_height = self.get_resolution(adb_device)
             else:
@@ -390,7 +433,8 @@ class DeviceManager:
             logger.info(
                 f'adb_connect emulator result {window_exe} {emulator.player_id} {emulator.type} {adb_device} hwnd_size {width, height} adb_size {adb_width, adb_height} {name, hwnd}')
             connected = adb_device is not None
-            emulator_device = {"address": emulator.serial, "device": "adb", "full_path": emulator.path,
+            address = adb_device.serial if adb_device is not None else emulator.serial
+            emulator_device = {"address": address, "device": "adb", "full_path": emulator.path,
                                "connected": connected, "imei": emulator.name, "player_id": emulator.player_id,
                                "nick": name or emulator.name, "emulator": emulator}
             if adb_device is not None:
