@@ -53,6 +53,8 @@ RELATIVE_FILES = [
     # Win10 云鸣潮兼容 (WGC 可用性门禁 + 去除黄色边框)
     'ok/util/window.py',
     'ok/device/capture_methods/windows_graphics.py',
+    # ADB/触屏模式下 esc 映射为安卓返回键
+    'ok/device/interaction_methods/keys.py',
 ]
 
 

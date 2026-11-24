@@ -135,3 +135,10 @@
 - **大招标志残留**（`src/task/BaseCombatTask.py`）：`send_key_and_wait_animation` 超时时 `_in_liberation` 可能仍为 True，导致 `in_combat()` 永远返回 True、战斗退不出去。超时处补上清理。
 - **Win10 云鸣潮**（`ok/util/window.py`、`ok/device/capture_methods/windows_graphics.py`、`config.py`）：WGC 可用性门禁原用 Win11 的「无边框」版本 20348，实际 WGC 从 Win10 2004（19041）起就可用；改为按 19041 判断并保留 COM 组件运行时探测。抓屏去黄色边框的设置也放宽到 Win10 尝试执行并加好退处理。设备标签更新为「需要Win10 2004+或Win11」。
 - 验证：模拟 19041 / 19045 / 22621 三个版本号，云模式均可用；语法检查通过；看门狗定向测试通过。本机为 Win11，Win10 实机效果待用户确认。
+
+## 十五、2026-11-24 补充修复：MuMu 触屏模式的 esc 返回键
+
+- **问题**：ADB/MuMu 触屏操作模式下，业务代码里大量 `send_key('esc')`（返回/关闭界面）被映射成 `KEYCODE_ESCAPE`，鸣潮手游不响应该键，导致日常任务卡在菜单、无法返回。
+- **修复**（`ok/device/interaction_methods/keys.py`）：`ADB_KEY_MAP['esc']` 由 `KEYCODE_ESCAPE` 改为 `KEYCODE_BACK`（安卓返回键）。该映射表仅 ADB 交互使用，PC（PostMessage/Pynput）与云游戏浏览器模式均不受影响。
+- **验证**：语法检查通过；映射断言 `ADB esc == KEYCODE_BACK` 且 `PC vk ESC == 27`（未改动）通过；两个备份恢复清单完整性检查通过。
+- 说明：这是触屏适配的第一步（低风险的「返回/关闭」类）。「打开菜单/战斗技能点按屏幕」需要标定触屏坐标，尚未实现。
