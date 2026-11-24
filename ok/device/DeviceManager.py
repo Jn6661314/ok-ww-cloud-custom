@@ -226,8 +226,10 @@ class DeviceManager:
             return None
         try:
             import subprocess
-            out = subprocess.run(['arp', '-a'], capture_output=True, text=True,
-                                 timeout=10, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0).stdout
+            # 中文 Windows 的 arp 输出是 GBK 编码, 不能用 text=True 的默认 utf-8 解码
+            proc = subprocess.run(['arp', '-a'], capture_output=True, timeout=10,
+                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            out = proc.stdout.decode(errors='replace')
             candidates = []
             for m in re.finditer(r'(\d+\.\d+\.\d+\.\d+)', out):
                 ip = m.group(1)
