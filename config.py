@@ -244,7 +244,7 @@ config = {
                  '--disable-direct-composition'],
         # Evaluated at launch time so per-account cookie profiles are honoured.
         'user_data_dir': cloud_browser.current_profile_dir,
-        'nick': '云游戏(需要Win11并安装Chrome或Edge)',
+        'nick': '云游戏(需要Win10 2004+或Win11, 并安装Chrome或Edge)',
     },
     'window_size': {
         'width': 1200,

@@ -160,7 +160,10 @@ class BaseCombatTask(CombatCheck):
                     animation_start = time.time()
                     logger.debug(f'animation started: {animation_start}')
                 self._in_liberation = True
-            self.next_frame()
+                self.next_frame()
+        # 动画检测超时时 _in_liberation 可能仍为 True, 会让 in_combat() 永远返回 True,
+        # 导致怪物已经死了还在继续自动战斗。超时必须清掉这个标志。
+        self._in_liberation = False
         logger.info(f'send_key_and_wait_animation timed out {key}')
 
     def refresh_cd(self):

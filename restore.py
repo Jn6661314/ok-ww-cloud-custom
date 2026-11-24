@@ -48,6 +48,11 @@ RELATIVE_FILES = [
     'src/char/CustomCharLoader.py',
     'src/char/CharFactory.py',
     'src/task/BaseCombatTask.py',
+    # 怪物消失后自动退出战斗
+    'src/combat/CombatCheck.py',
+    # Win10 云鸣潮兼容 (WGC 可用性门禁 + 去除黄色边框)
+    'ok/util/window.py',
+    'ok/device/capture_methods/windows_graphics.py',
 ]
 
 

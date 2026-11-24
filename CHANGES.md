@@ -128,3 +128,10 @@
 - **协奏环颜色在云流下失准**：`con_colors` 每个通道区间仅约 30 宽，4:2:0 压缩后颜色偏移导致协奏值算错 → intro 预判错 → 乱切人。云浏览器模式下对每个通道区间向外放宽 `CLOUD_CON_COLOR_TOLERANCE`（默认 10，可在 `BaseCombatTask.py` 顶部调整）用于环颜色统计与属性索引推断；本地客户端不走此分支，识别行为零变化。
 - 验证：`tests/TestCloudCombatFixes.py` 4 项单测（工坊类保活、缓存补全、颜色容差仅云模式生效）全部通过；原有 `TestCustomCharLoader.py` 26 项无回归。
 - 说明：颜色容差默认值是按经验设的保守值。若云游戏上仍有协奏环误判，请提供对战中"协奏环非满 / 技能冷却中 / 大招可用"的截图，据此微调 `CLOUD_CON_COLOR_TOLERANCE` 或各属性区间。本次修复未提上游 PR，仅更新本仓库与本地运行版。
+
+## 十四、2026-11-24 修复：无怪物仍自动战斗 + Win10 云鸣潮兼容
+
+- **无怪物时自动退出战斗**（`src/combat/CombatCheck.py`）：新增无怪物看门狗，连续 2 秒既没有锁定目标、也看不到血条即判定怪物已死亡/消失并退出战斗。血条因云游戏压缩闪烁时不会无限续命；深渊挑战强制战斗窗口与大招动画期间不触发，避免误伤。
+- **大招标志残留**（`src/task/BaseCombatTask.py`）：`send_key_and_wait_animation` 超时时 `_in_liberation` 可能仍为 True，导致 `in_combat()` 永远返回 True、战斗退不出去。超时处补上清理。
+- **Win10 云鸣潮**（`ok/util/window.py`、`ok/device/capture_methods/windows_graphics.py`、`config.py`）：WGC 可用性门禁原用 Win11 的「无边框」版本 20348，实际 WGC 从 Win10 2004（19041）起就可用；改为按 19041 判断并保留 COM 组件运行时探测。抓屏去黄色边框的设置也放宽到 Win10 尝试执行并加好退处理。设备标签更新为「需要Win10 2004+或Win11」。
+- 验证：模拟 19041 / 19045 / 22621 三个版本号，云模式均可用；语法检查通过；看门狗定向测试通过。本机为 Win11，Win10 实机效果待用户确认。
