@@ -42,6 +42,8 @@ RELATIVE_FILES = [
     'src/task/BaseWWTask.py',
     # 安卓触屏专用操作模式层(返回/菜单=键位表 `, 指南书 F2, PC/云不变)
     'src/task/touch_mode.py',
+    # MuMu/安卓专用每日任务(继承 DailyTask, 配置一致, 仅限定 adb 设备)
+    'src/task/AndroidDailyTask.py',
     'src/task/account/MultiAccountConfigStore.py',
     'src/gui/MultiAccountConfigTab.py',
     'src/gui/MultiAccountConfigDialog.py',

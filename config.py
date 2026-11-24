@@ -298,6 +298,7 @@ config = {
         ["src.task.RahaiBlocksTask", "RahaiBlocksTask"],
         ["src.task.DailyTask", "DailyTask"],
         ["src.task.CloudDailyTask", "CloudDailyTask"],
+        ["src.task.AndroidDailyTask", "AndroidDailyTask"],
         ["src.task.FarmEchoTask", "FarmEchoTask"],
         ["src.task.NightmareNestTask", "NightmareNestTask"],
         ["src.task.TacetTask", "TacetTask"],
