@@ -129,16 +129,19 @@ def main():
             'tag_name': tag,
             'name': title,
             'body': body,
-            'target_commitish': commit,
             'draft': False,
             'prerelease': False,
         }
         if tag in by_tag:
-            payload.pop('tag_name', None)
-            payload.pop('target_commitish', None)
+            # 更新已有 release: 不允许再改 tag / target
             status, resp = api('PATCH', f"/releases/{by_tag[tag]['id']}", token, payload)
             action = '更新'
         else:
+            # 新建 release: tag 已推上远端, GitHub 会直接复用它;
+            # target_commitish 只接受完整 SHA, 用缩写会返回 422。
+            full_sha = git('rev-parse', commit).stdout.strip()
+            if full_sha:
+                payload['target_commitish'] = full_sha
             status, resp = api('POST', '/releases', token, payload)
             action = '创建'
 
