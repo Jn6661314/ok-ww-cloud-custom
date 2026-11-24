@@ -186,3 +186,85 @@
 - **连带修复**：`MouseResetTask` 在 adb 下每 10 秒刷的 `'ADBCaptureMethod' object has no attribute 'get_abs_cords'` 随截图通道切到 PC 侧而消失（`BaseCaptureMethod` 本有该方法）。
 - **TouchMode 兼容**：`src/task/touch_mode.py` 发的 `` ` ``/`f2` 在 PostMessage 下同样合法（VkKeyScan 转 VK 码），语义键位无需修改；`ADB_KEY_MAP` 保留给仍选 ADBInteraction 的场景。
 - **恢复清单**：`restore.py` 新增 `ok/device/DeviceManager.py`（现 26 项）。三处目录一致，语法检查通过。生效需重启 OKWW。
+
+## 二十一、2026-11-24 补充：安卓每日任务"卡在大世界不动"的根因修复
+
+### 21.1 根因复盘
+
+用户反馈："mumu链接有问题，日常专属任务进入大世界以后一直卡在那不动，也不跳过也没其他操作也没额外日志输出"。
+
+日志证据链（`working/logs/ok-script.log`）：
+
+```
+18:03:50  AndroidDailyTask: current task wait main esc=True
+18:13:24  wait_until timeout <bound method BaseWWTask.in_team_and_world> 10 seconds
+18:13:51  wait_until timeout <function BaseWWTask.ensure_main.<lambda>> 600 seconds
+18:13:51  错误 请在大世界并在队伍中开始!
+```
+
+`wait main` 到超时恰好 **601 秒**，与 `ensure_main` 在未登录态把 `time_out` 提到 600 秒完全吻合。
+
+真正的断点在 `in_team()`：PC 端用右上角队伍栏的 `1/2/3` 数字徽章（`char_1_text`/`char_2_text`/`char_3_text`）判定"在队伍中"，但**安卓客户端的队伍栏是圆形角色头像，没有数字徽章**。复刻 `FeatureSet.find_one_feature` 的区域约束匹配后实测：
+
+| 模板 | 安卓大世界实测置信度 | 阈值 |
+| --- | --- | --- |
+| `char_1_text` | 0.150 | 0.8 |
+| `char_2_text` | 0.115 | 0.8 |
+| `char_3_text` | 0.129 | 0.8 |
+
+三个模板全部落空 → `in_team()` 恒 False → `in_team_and_world()` 恒 False → `is_main()` 恒 False → `ensure_main()` 必然 600 秒超时。
+
+同时确认**没有任何现成模板可复用**：对 301 个模板做区域约束扫描与全图扫描，安卓大世界最佳匹配仅 0.615（且是角色专属模板），无法通用。因此判定必须走代码判据。
+
+### 21.2 新增 `src/task/android_world.py`（安卓专用大世界判定）
+
+用与角色/场景无关的 HUD 元素判定，阈值全部来自真实帧标定：
+
+| 判据 | 大世界实测 | 加载界面 | 活动页 | 登录页 | 全黑帧 | 阈值 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `radar_yellow`（左上雷达黄色玩家箭头） | 339 / 347 | 0 | 29 | 0 | 0 | ≥120 |
+| `ult_orange`（底部偏左协奏金球） | 534 / 717 | 0 | 0 | 0 | 0 | ≥300 |
+| `party_white`（右上队伍栏白条） | 815 / 1057 | 215 | 619 | 208 | 0 | ≥600 |
+| `hp_bar_white`（底部共鸣者血条） | 3023 / 2877 | 2240 | 0 | 1073 | 0 | ≥2200 |
+| `loading_bar`（底部最长连续白像素） | 93 / 94 | **1313** | 381 | 74 | 0 | ≥800 判为加载中 |
+
+判定规则：
+
+1. 全黑帧 → 直接判否并单独告警（区别于"不在大世界"）。
+2. `loading_bar ≥ 800` → 判否（加载界面）。
+3. `radar_yellow ≥ 120` 或 `ult_orange ≥ 300` → 判真。
+4. 兜底：`party_white ≥ 600` **且** `hp_bar_white ≥ 2200` 同时成立才判真。
+
+> **踩过的坑**：最初只按"白像素总数"判血条，结果**加载界面被误判成大世界**（加载进度条 2240 ≥ 2200）。逐行分析后发现加载进度条是 **y=1021~1027 单行、贯穿全屏（连续 1299 px）** 的细条，而大世界血条是 **两段 85 px 的短条**（中间有刻度分隔）。改用"单行最长连续白像素长度"后两者彻底分开（1313 vs 93），阈值 800 落在活动页 381 与加载页 1313 之间，两侧都有 2 倍以上余量。
+
+### 21.3 `src/task/BaseWWTask.py` 改动
+
+- `in_team()` 开头加 `if self.is_adb(): return self.in_team_android()`，PC 分支逻辑一行未改。
+- 新增 `in_team_android()`：调用 `android_world.in_android_world()`，返回同构三元组 `(是否在队伍, 当前角色下标, 队伍人数)`。安卓端无法可靠区分出战角色下标（头像与 PC 徽章布局不同），队伍人数按"至少 1 名"处理，战斗切人逻辑退化为不切人。
+- **补日志**：PC 分支三个模板全落空时原先**完全静默**，现在打印各模板实际置信度；安卓端打印 `in_team(android): in world (radar_yellow=347)` / `not in world (...)`，黑帧单独 warning。
+
+### 21.4 `ok/device/capture_methods/nemu_ipc.py`（MuMu 抓屏黑帧拦截）
+
+- 背景：MuMu IPC 通道偶尔"返回成功但画面全黑"（实测 `mean=0`，`max=0`，非零像素占比 0；18:13:51 的错误截图与 18:57 两张截图都是纯黑，等于没有任何现场信息）。上层拿到黑帧会认为画面正常，于是模板全不命中，表现和"不在大世界"一模一样。
+- 处理：全黑帧先**重建 IPC 连接重试 3 次**（每次间隔 0.5 秒），仍失败抛带明确中文原因的 `CaptureException`；底层 `@retry` 耗尽后抛的是不带 message 的裸 `Exception`，这里补上"请确认模拟器正在运行、窗口可见、未开启后台保活"等可读原因。
+- 判定阈值：整帧 `max ≤ 8` 视为空画面（正常画面即使只有一个非黑像素也不会误判）。
+
+### 21.5 新增安卓端"连接已断开"弹窗处理
+
+- 场景：MuMu 挂机过久或网络抖动，游戏弹【连接已断开】对话框（"已与服务器断开连接，请尝试重新登录"）。此时**画面背后仍然是大世界**，`in_team` 判定依然为 True，任务以为一切正常，但所有点击都被弹窗挡住——与用户反馈的"卡住不动"完全一致。
+- 处理（`BaseWWTask.handle_android_disconnect()`，在 `is_main()` 里**先于**大世界判定执行）：
+  1. 廉价亮度预筛：中央区域亮像素（灰度 > 200）占比 ≥ 0.5 才继续（实测弹窗 0.777，其余画面 ≤ 0.101），避免每次 `is_main` 都跑 OCR；
+  2. OCR 确认文案命中 `连接已断开|断开连接|重新登录`（实测置信度 1.0）；
+  3. 点掉弹窗底部的「确认」，复位 `logged_in = False`，交给既有 `wait_login` 重新登录。
+- PC / 云游戏完全不受影响（`is_adb()` 为假直接返回）。
+
+### 21.6 恢复清单与验证
+
+- `restore.py` 的 `RELATIVE_FILES` 新增 `src/task/android_world.py` 与 `ok/device/capture_methods/nemu_ipc.py`（现 30 项），避免官方更新/恢复覆盖。
+- 顺带修正：此前 `restore.py` 只在 17:47 同步过一次，仓库里 18:10 之后的 `BaseWWTask.py`（`back()`/`send_key()` 触屏语义统一）、`touch_mode.py`（`is_touch` 只在 `ADBInteraction` 下为真）、`AndroidDailyTask.py` 三处改动**并未生效到运行目录**，本次一并补齐。
+- 实测验证：
+  - MuMu 15.0 实机走通「连接页 → 点击连接 → 加载 → 大世界」；
+  - 大世界判定对 **大世界×2 / 加载界面×1 / 活动页×1 / 登录页×3 / 全黑帧×3** 共 10 张带标注真实帧全部判对；
+  - 断线弹窗处理 5/5 通过（真实调用应用配置的 `onnxocr` 走完整决策链，非 ADB 场景不误触发）；
+  - 黑帧拦截 13/13 通过（黑帧判定边界、正常帧不误伤、先黑后好能自恢复、持续黑帧抛明确异常、裸 Exception 补可读原因）。
+- 遗留：安卓端"当前出战角色下标"仍无法识别，战斗切人逻辑在安卓端退化为不切人，属已知限制。

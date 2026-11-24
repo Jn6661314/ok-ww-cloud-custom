@@ -44,6 +44,10 @@ RELATIVE_FILES = [
     'src/task/touch_mode.py',
     # MuMu/安卓专用每日任务(继承 DailyTask, 配置一致, 仅限定 adb 设备)
     'src/task/AndroidDailyTask.py',
+    # 安卓端"在大世界且在队伍中"判定(安卓队伍栏是圆形头像, 没有 PC 的 1/2/3 数字徽章)
+    'src/task/android_world.py',
+    # MuMu IPC 抓屏黑帧拦截: 全黑帧重建连接重试, 连续失败抛明确异常而不是静默卡住
+    'ok/device/capture_methods/nemu_ipc.py',
     # MouseResetTask 兼容: IPC/ADB 截图无 get_abs_cords 时跳过(纯 PC 功能)
     'src/task/MouseResetTask.py',
     'src/task/account/MultiAccountConfigStore.py',

@@ -13,6 +13,7 @@ import cv2
 from src.Labels import Labels
 from src.scene.WWScene import WWScene
 from src.task.touch_mode import TouchMode, TOUCH_MENU_BACK_KEY
+from src.task import android_world
 
 logger = Logger.get_logger(__name__)
 number_re = re.compile(r'(\d+)')
@@ -24,6 +25,11 @@ LOGIN_CLICK_SETTLE_TIME = 4  # seconds; keep below AutoLoginTask trigger_interva
 CLOUD_DISCONNECT_TEXTS = re.compile(r'云服务错误|服务器断开|断开连接')
 CLOUD_EXIT_GAME_TEXTS = re.compile(r'^(退出游戏|确定)$')
 CLOUD_RELOGIN_TIMEOUT = 600
+# 安卓端(模拟器)"连接已断开"弹窗: 画面后面仍然是大世界, in_team 判定依然为 True,
+# 任务会以为一切正常, 但所有点击都被弹窗挡住, 表现同样是"卡住不动"。
+# 该弹窗只有"确认"一个按钮, 点掉后游戏会退回登录页, 由 wait_login 重新登录。
+ANDROID_DISCONNECT_TEXTS = re.compile(r'连接已断开|連接已斷開|断开连接|斷開連接|重新登录|重新登錄')
+ANDROID_CONFIRM_TEXTS = ['确认', '確認']
 # CLOUD ACCOUNT ENTRY PATCH: cloud game can take minutes to load after clicking
 # "进入游戏"; the home-page button stays visible, so clicks must be throttled.
 CLOUD_START_COOLDOWN = 60
@@ -764,6 +770,11 @@ class BaseWWTask(BaseTask):
         self.info_set('current task', f'in main esc={esc}')
 
     def is_main(self, esc=True):
+        # 安卓端"连接已断开"弹窗必须在大世界判定之前处理:
+        # 弹窗背后仍是��世界, in_team 会返回 True, 任务以为一切正常,
+        # 但所有点击都被弹窗挡住, 于是表现为"卡住不动也不跳过"。
+        if self.handle_android_disconnect():
+            return False
         if self.in_team_and_world():
             self.logged_in = True
             if self.in_realm():
@@ -801,6 +812,40 @@ class BaseWWTask(BaseTask):
         # wait_login 在云游戏首页点击"进入游戏", 进游戏后处理登录/月卡, 回到大世界后返回 True
         self.wait_until(self.wait_login, time_out=CLOUD_RELOGIN_TIMEOUT, raise_if_not_found=True,
                         settle_time=1)
+        return True
+
+    def handle_android_disconnect(self):
+        """安卓端(模拟器)"连接已断开"弹窗处理。
+
+        MuMu 长时间挂机或网络抖动时, 游戏会弹出【连接已断开】对话框
+        ("已与服务器断开连接, 请尝试重新登录")。此时画面背后仍然是��世界,
+        in_team 判定依然为 True, 任务会认为一切正常, 但所有点击都被弹窗
+        挡住, 表现和用户反馈的"卡住不动、不跳过、也没日志"一模一样。
+
+        处理方式: 先用廉价的亮度预筛确认中央有大弹窗(否则不做 OCR),
+        再 OCR 确认弹窗文案确实是断线提示, 点掉"确认", 把 logged_in 复位,
+        让 wait_login 接手重新登录。
+        """
+        if not self.is_adb():
+            return False
+        frame = self.executor.nullable_frame()
+        if frame is None:
+            return False
+        has_dialog, ratio = android_world.has_center_dialog(frame)
+        if not has_dialog:
+            return False
+        self.log_debug(f'android: center dialog detected (bright ratio={ratio:.2f}), checking text')
+        texts = self.ocr(box=self.box_of_screen(0.15, 0.2, 0.85, 0.8, hcenter=True, vcenter=True),
+                         name='android_disconnect', log=self.debug)
+        if not self.find_boxes(texts, match=ANDROID_DISCONNECT_TEXTS):
+            return False
+        confirm = self.find_boxes(texts, match=ANDROID_CONFIRM_TEXTS)
+        if not confirm:
+            return False
+        self.log_info(self.tr('Game disconnected, closing the notice and logging in again'), notify=True)
+        # OCR 结果按 y 排序, 最后一个"确认"就是弹窗底部的按钮
+        self.click(confirm[-1], after_sleep=2)
+        self.logged_in = False
         return True
 
     def wait_login(self):
@@ -1020,6 +1065,14 @@ class BaseWWTask(BaseTask):
         return current_direction, current_adjust, False
 
     def in_team(self):
+        # 安卓端(ADB/模拟器)队伍栏是圆形头像, 没有 PC 端的 1/2/3 数字徽章,
+        # char_N_text 模板永远匹配不上(实测置信度仅 0.11~0.15), 会让
+        # in_team_and_world() 恒为 False -> is_main() 恒为 False ->
+        # ensure_main() 一直等到 600 秒超时, 表现为"卡住不动且没有日志"。
+        # 安卓端改用与角色无关的 HUD 元素判定(小地图雷达黄色玩家箭头等)。
+        if self.is_adb():
+            return self.in_team_android()
+
         c1 = self.find_one('char_1_text',
                            threshold=0.8)
         c2 = self.find_one('char_2_text',
@@ -1040,7 +1093,44 @@ class BaseWWTask(BaseTask):
             self.logged_in = True
             return True, current, exist_count + 1
         else:
+            # 三个模板全落空时原先完全静默, 排查时看不到任何线索;
+            # 这里把每个模板的实际置信度打出来。
+            self.log_debug(f'in_team: no char_N_text matched (c1={c1}, c2={c2}, c3={c3})')
             return False, -1, exist_count + 1
+
+    def in_team_android(self):
+        """安卓端"在大世界且在队伍中"判定。
+
+        安卓客户端右上角队伍栏是**圆形角色头像, 没有数字徽章**, PC 端的
+        char_N_text 模板在这里永远匹配不上, 因此安卓端改用与角色无关的
+        HUD 元素判断(详见 src/task/android_world.py):
+          - 左上角小地图雷达里的黄色玩家箭头
+          - 底部中央的共鸣者血条 / 大招能量球
+          - 右侧队伍栏的白色血条
+
+        返回值与 PC 端 in_team() 保持同构: (是否在队伍, 当前角色下标, 队伍人数)。
+        """
+        frame = self.executor.nullable_frame()
+        if frame is None:
+            self.log_debug('in_team(android): no frame available')
+            return False, -1, 1
+
+        in_world, reason = android_world.in_android_world(frame)
+        if not in_world:
+            if reason == 'black_frame':
+                # MuMu 的 IPC 截图偶尔返回纯黑图, 此时任何模板匹配都不会命中,
+                # 表现和"不在大世界"一样。这里必须明确区分, 否则排查方向会被带偏。
+                self.log_warning(self.tr(
+                    '安卓端截图全黑(MuMu 抓屏失败), 无法判定是否在大世界。'))
+            else:
+                self.log_debug(f'in_team(android): not in world ({reason})')
+            return False, -1, 1
+
+        self.logged_in = True
+        # 安卓端无法可靠区分当前出战角色的下标(头像与 PC 徽章布局不同),
+        # 队伍人数按"至少 1 名"处理, 战斗切人逻辑会退化为不切人。
+        self.log_debug(f'in_team(android): in world ({reason})')
+        return True, -1, 2
 
         # Function to check if a component forms a ring
 
