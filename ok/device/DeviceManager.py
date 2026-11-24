@@ -2,6 +2,7 @@ import os
 import re
 import socket
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
@@ -21,6 +22,13 @@ from ok.util.process import kill_exe
 from ok.util.window import windows_graphics_available, find_hwnd
 
 logger = Logger.get_logger(__name__)
+
+# 安卓设备(真机/模拟器)启动流程里用 adb 拉起游戏的节流参数。
+# 模拟器开机后游戏不会自动运行, 需要显式发 LAUNCHER intent;
+# 而 do_start 在"等待设备就绪"的循环里会被反复调用, 所以两次拉起之间要留冷却。
+ADB_GAME_START_COOLDOWN = 20
+# 模拟器刚开机时 adb 可能还没连上, 这里最多等这么久再判定"设备没就绪"。
+ADB_DEVICE_READY_TIMEOUT = 60
 
 
 def resolve_emulator_window_exe(exe_path, instance_name=None):
@@ -53,6 +61,7 @@ class DeviceManager:
         self.capture_method = None
         self.global_config = global_config
         self._adb_lock = threading.Lock()
+        self._adb_game_start_at = 0.0
         if app_config.get('adb'):
             self.packages = app_config.get('adb').get('packages')
         else:
@@ -787,6 +796,12 @@ class DeviceManager:
                     self.interaction.capture = self.capture_method
                     self.interaction.width = width
                     self.interaction.height = height
+                # 安卓设备启动: 模拟器/真机开机后游戏不会自动运行,
+                # 这里等设备就绪后用 adb 把鸣潮拉起来(已经在前台则跳过)。
+                try:
+                    self.adb_start_game()
+                except Exception as e:
+                    logger.warning(f'do_start adb_start_game failed: {e}')
 
         if notify:
             communicate.adb_devices.emit(True)
@@ -924,6 +939,68 @@ class DeviceManager:
         elif installed := self.adb_check_installed(self.packages):
             self.adb_start_package(installed)
             return True
+
+    def adb_wait_device_ready(self, timeout=None):
+        """等待安卓设备(模拟器)开机就绪。
+
+        模拟器刚起来时 adb 可能还没连上, 或者系统还在开机动画中, 此时执行
+        命令会失败。这里轮询到设备能正常回命令为止, 返回是否就绪。
+        """
+        timeout = ADB_DEVICE_READY_TIMEOUT if timeout is None else timeout
+        deadline = time.time() + timeout
+        while not self.exit_event.is_set():
+            try:
+                if self.device is None:
+                    # adb 还没连上(模拟器仍在开机): 这里不空等,
+                    # 交给"等待设备就绪"的循环下一轮再试。
+                    logger.debug('adb_wait_device_ready: device not connected yet')
+                    return False
+                if self.shell('echo ok', timeout=5):
+                    return True
+            except Exception as e:
+                logger.debug(f'adb_wait_device_ready: device not ready yet ({e})')
+            if time.time() >= deadline:
+                return False
+            time.sleep(1)
+        return False
+
+    def adb_start_game(self, force=False):
+        """安卓设备启动流程里用 adb 拉起鸣潮。
+
+        模拟器/真机开机后游戏并不会自动运行, 这里显式发 LAUNCHER intent 把
+        鸣潮拉起来。已经在前台就不做任何事; 有冷却时间, 避免"等待设备就绪"
+        的循环里反复拉起。返回是否成功拉起(或本来就在前台)。
+        """
+        if not self.packages:
+            logger.debug('adb_start_game: no packages configured')
+            return False
+        now = time.time()
+        if not force and now - self._adb_game_start_at < ADB_GAME_START_COOLDOWN:
+            logger.debug('adb_start_game: cooling down, skip')
+            return False
+        try:
+            if self.adb_check_in_front(self.packages):
+                logger.debug('adb_start_game: game already in front')
+                self._adb_game_start_at = now
+                return True
+            if not self.adb_wait_device_ready():
+                logger.warning('adb_start_game: 安卓设备未就绪, 稍后重试拉起游戏')
+                return False
+            installed = self.adb_check_installed(self.packages)
+        except Exception as e:
+            logger.warning(f'adb_start_game: 查询游戏包名失败: {e}')
+            return False
+        if not installed:
+            logger.warning(f'adb_start_game: 未找到鸣潮包名 {self.packages}')
+            return False
+        logger.info(f'adb_start_game: 拉起鸣潮 {installed}')
+        try:
+            self.adb_start_package(installed)
+        except Exception as e:
+            logger.warning(f'adb_start_game: 拉起鸣潮失败: {e}')
+            return False
+        self._adb_game_start_at = now
+        return True
 
     def update_capture(self, config: dict):
         import time

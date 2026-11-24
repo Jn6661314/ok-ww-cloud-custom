@@ -50,6 +50,9 @@ RELATIVE_FILES = [
     'src/task/android_book.py',
     # MuMu IPC 抓屏黑帧拦截: 全黑帧重建连接重试, 连续失败抛明确异常而不是静默卡住
     'ok/device/capture_methods/nemu_ipc.py',
+    # 梦魇聚落(残象聚落)传送: 聚落详情页的"快速旅行"按钮在云游戏/安卓端是
+    # 黑底白字, 模板匹配不上, 改用 OCR 识别 + 兜底确认按钮
+    'src/task/NightmareNestTask.py',
     # MouseResetTask 兼容: IPC/ADB 截图无 get_abs_cords 时跳过(纯 PC 功能)
     'src/task/MouseResetTask.py',
     'src/task/account/MultiAccountConfigStore.py',

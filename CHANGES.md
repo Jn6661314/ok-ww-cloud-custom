@@ -354,3 +354,46 @@
   出现『活跃行迹 / 完成1次日常任务 0/1 / 活跃度 120』页面」全程走通。
 - 附带确认：`DailyTask.open_daily()` 里紧接的 `click(0.17, 0.12)` 在安卓端正好落在
   「活跃度」标签页上，无需改动。
+
+## 二十三、2026-11-24 补充：梦魇聚落打不开 / 登录黑屏冗余等待 / 安卓启动拉起鸣潮
+
+### 23.1 梦魇聚落（残象聚落）点不开
+
+- **根因是"传送按钮认不出来"，不是点击坐标错**。聚落条目点开后是「详情页 + 右下角黑底白字的**快速旅行**按钮」，
+  而脚本只会找 `fast_travel_custom` / `gray_teleport` / `remove_custom` 三个 PC 模板。
+  实测 1920×1080 云游戏与安卓截图上，这三个模板最高匹配度只有 **0.02 ~ 0.28**，远低于 0.7 阈值，
+  `wait_feature` 直接抛异常 → 日志 `NightmareNestTask Failed`。
+- **修复**（`src/task/BaseWWTask.py` 新增 `find_travel_button()` / `find_travel_button_by_ocr()` /
+  `find_confirm_button()` / `find_confirm_button_by_ocr()`）：
+  - 模板找不到时用 **OCR 认「快速旅行」**，实测 `onnxocr` 在右下角 `(0.7,0.89)-(1,1)` 区域置信度 **0.99998**。
+  - 点完传送若弹确认框（`确认` / `確定` / `确定`）一并点掉。
+  - 「按钮是否还在」的判定只对同名模板成立，OCR 按钮改为直接等回到大世界。
+- **新增覆盖层文件** `src/task/NightmareNestTask.py`（基于上游 v3.8.13 的 `NightmareNestTask.py`），
+  `combat_nest` 改用新的 `wait_travel_or_team()`，`_travel_to_nest_or_skip` 重写。
+- 已加入 `restore.py` 的 `RELATIVE_FILES`（定制文件 31 → 32）。
+
+### 23.2 登录后黑屏被误判为抓屏失败
+
+- 模拟器点完登录后正常黑屏十几秒（游戏载入资源），MuMu IPC 此时返回纯黑帧；
+  旧逻辑重试 3 次（约 1.5 秒）就抛 `CaptureException`，**每日任务被直接断掉**
+  （21:09 / 21:13 的 `error_DailyTask_CaptureException` 截图佐证）。
+- **修复**（`ok/device/capture_methods/nemu_ipc.py`）：新增 `BLACK_FRAME_GRACE_PERIOD = 30` 秒**冗余等待窗口**。
+  窗口内全黑一律当作"登录/加载中"继续等（第一帧黑时重建一次 IPC 连接，同一段黑屏不再反复重连），
+  超过 30 秒仍是全黑才抛带秒数的明确异常。
+
+### 23.3 安卓设备启动时用 adb 拉起鸣潮
+
+- 模拟器/真机开机后游戏不会自动运行；原先只有 `start_controller.check_device_error()` 里
+  调过一次 `adb_ensure_in_front()`，而且它在**成功抓到一帧之后**才执行，
+  模拟器桌面分辨率不匹配时会一直重试、游戏始终没被拉起。
+- **修复**（`ok/device/DeviceManager.py`）：安卓设备启动分支（`do_start` 的 adb 分支）主动调
+  `adb_start_game()` —— **等 adb 就绪 → 确认游戏不在前台 → `monkey -p <包名> -c android.intent.category.LAUNCHER 1` 拉起**。
+  - 已在前台则不做任何事；两次拉起之间 20 秒冷却，避免"等待设备就绪"循环反复拉起。
+  - adb 还没连上时立刻返回不空等，交给下一轮重试；设备已连接但命令失败时最多等 60 秒。
+
+### 23.4 验证
+
+- 新增 `probe/test_adb_start_game.py`（19 项：前台/未前台/未安装/冷却/设备未就绪/未连上/强制拉起）—— 全绿。
+- 更新 `probe/test_black_frame.py`（19 项，含冗余窗口内不抛异常、窗口耗尽才抛异常、窗口时长上限）—— 全绿。
+- 更新 `probe/test_touch_book.py`（14 项，含"书已打开则不再点右上角图标"、"书未打开才点"）—— 全绿。
+- 回归：`test_book_opened` 3/3、`test_android_book` 5/5、`test_android_world` 10/10、`test_disconnect` 5/5 —— 全绿。

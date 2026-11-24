@@ -1,5 +1,18 @@
 ## 更新日志
 
+**2026-11-24（梦魇聚落打不开 / 登录黑屏被误判 / 安卓启动自动拉起鸣潮）**
+
+- **「梦魇聚落」（游戏内＝残象聚落）能正确点开了**（`src/task/NightmareNestTask.py`，新增定制覆盖层）：
+  - **根因不是坐标，是按钮认不出来**。点开聚落条目后是「详情页 + 右下角黑底白字的**快速旅行**按钮」，而脚本只会找 `fast_travel_custom` / `gray_teleport` / `remove_custom` 这三个 PC 模板——实测在 1920×1080 的云游戏/安卓截图上，这三个模板的最高匹配度只有 **0.02 ~ 0.28**，远低于 0.7 阈值，于是 `wait_feature` 直接抛异常，日志里留下一句 `NightmareNestTask Failed`。
+  - **修复**：新增 `BaseWWTask.find_travel_button()` —— 先按老模板找，找不到就用 **OCR 认「快速旅行」四个字**（实测 `onnxocr` 在右下角区域 `(0.7,0.89)-(1,1)` 识别置信度 **0.99998**，文本框 x≈1533~1661 / y≈984~1026）。同时补了 `find_confirm_button()`，点完传送后如果弹确认框（`确认` / `確定`）会一并点掉。
+  - 「按钮是否还在」的原判定只对同名模板成立，OCR 认出来的按钮没有同名模板，所以 OCR 按钮改为直接等回到大世界，避免误判成"没点上传送"。
+- **登录后的黑屏不再被当成"抓屏失败"打断每日任务**（`ok/device/capture_methods/nemu_ipc.py`）：
+  - 模拟器点完登录后会正常黑屏十几秒（游戏在载入资源），MuMu 的 IPC 通道此时返回的就是纯黑帧，旧逻辑重试 3 次（约 1.5 秒）就抛 `CaptureException`，每日任务被直接断掉（21:09 / 21:13 的 `error_DailyTask_CaptureException` 截图佐证）。
+  - **修复**：新增 `BLACK_FRAME_GRACE_PERIOD = 30` 秒**冗余等待窗口**。窗口内全黑一律当作"登录/加载中"继续等（每秒重试一次，第一帧黑时重建一次 IPC 连接，之后同一段黑屏不再反复重连），**只有超过 30 秒仍然是全黑才判定为真的抓不到画面**并抛出带秒数的明确异常。窗口默认 30 秒，可按需调小。
+- **安卓设备启动流程里自动拉起鸣潮**（`ok/device/DeviceManager.py`）：
+  - 模拟器/真机开机后游戏并不会自己运行，之前只有 `start_controller` 的就绪检查里调过一次 `adb_ensure_in_front()`，而且它在**成功抓到一帧之后**才执行，模拟器桌面画面一旦分辨率不匹配就会一直重试、游戏始终没被拉起。
+  - 现在安卓设备启动（`do_start` 的 adb 分支）里会主动调 `adb_start_game()`：**等 adb 就绪 → 确认游戏不在前台 → 用 `monkey -p com.kurogame.mingchao -c android.intent.category.LAUNCHER 1` 拉起**。已在前台则什么都不做；两次拉起之间有 20 秒冷却，避免"等待设备就绪"的循环里反复拉起；adb 还没连上时立刻返回、不空等，交给下一轮重试。
+
 **2026-11-24（安卓端 F1/F2 改成直接点右上角图标）**
 
 - **触屏端没有 F1/F2 键，改成点图标**。PC 端 `F2` 打开「索拉指南」、`F1` 打开「活动」；安卓客户端触屏上没有这两个键，之前只能干等超时。现在统一改成点大世界右上角那排图标（`src/task/touch_mode.py`）：
@@ -184,8 +197,10 @@ src/                        新增与修改的 ok-ww 源码
   task/android_world.py     安卓端"在大世界且在队伍中"判定（雷达黄点/协奏金球等 HUD 判据）
   task/android_book.py      安卓端索拉指南（PC 的 F2）类别图标定位（笔画掩码 + 多尺度 IoU）
   task/touch_mode.py        安卓触屏操作模式层（返回=菜单=` 键，F1/F2 改为点右上角图标）
+  task/NightmareNestTask.py 梦魇/残象聚落传送（"快速旅行"按钮 OCR 识别 + 确认按钮兜底）
 ok/device/capture_methods/  patched 后的 ok-script 捕获模块
-  nemu_ipc.py               MuMu IPC 抓屏（新增全黑帧拦截 + 重连重试 + 明确报错）
+  nemu_ipc.py               MuMu IPC 抓屏（全黑帧拦截 + 重连重试 + 30 秒冗余等待窗口）
+ok/device/DeviceManager.py  patched 后的设备管理（安卓设备启动时用 adb 拉起鸣潮）
 tools/                      安装、patch 与工坊缓存下载脚本
 tests/                      新增/修改的单元测试
 docs/                       多账号配置说明、备份恢复说明

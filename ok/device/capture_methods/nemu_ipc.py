@@ -20,6 +20,10 @@ logger = Logger.get_logger(__name__)
 BLACK_FRAME_MAX_VALUE = 8
 BLACK_FRAME_MAX_RETRY = 3
 BLACK_FRAME_RETRY_INTERVAL = 0.5
+# 登录/加载阶段模拟器会正常黑屏十几秒(游戏正在载入资源, 窗口还没渲染出画面),
+# 这段时间全黑属于正常现象, 不能当成"抓屏失败"把整个每日任务打断。
+# 所以给一个冗余等待窗口: 窗口内一直是黑屏就继续等, 超过窗口才判定为真的抓不到画面。
+BLACK_FRAME_GRACE_PERIOD = 30
 
 
 def is_black_frame(frame):
@@ -106,7 +110,11 @@ class NemuIpcCaptureMethod(BaseCaptureMethod):
     def do_get_frame(self):
         if self.exit_event.is_set():
             return None
-        for attempt in range(1, BLACK_FRAME_MAX_RETRY + 1):
+        # 冗余等待窗口的起点: 在窗口内, 全黑帧一律当作"登录/加载中"继续等。
+        deadline = time.monotonic() + BLACK_FRAME_GRACE_PERIOD
+        attempt = 0
+        ipc_reset = False
+        while True:
             self.init_nemu()
             if not self.nemu_impl:
                 return None
@@ -122,16 +130,23 @@ class NemuIpcCaptureMethod(BaseCaptureMethod):
                 ) from e
             if not is_black_frame(frame):
                 return frame
+            attempt += 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CaptureException(
+                    f'MuMu 模拟器抓屏持续 {BLACK_FRAME_GRACE_PERIOD} 秒返回空画面(全黑), '
+                    f'请确认模拟器窗口可见(未被最小化/遮挡)且未开启「后台保活」, 然后重试'
+                )
             logger.warning(
-                f'MuMu 抓屏返回空画面(全黑), 第 {attempt}/{BLACK_FRAME_MAX_RETRY} 次, '
-                f'重建 IPC 连接后重试')
-            self.reset_nemu()
-            if attempt < BLACK_FRAME_MAX_RETRY:
-                time.sleep(BLACK_FRAME_RETRY_INTERVAL)
-        raise CaptureException(
-            'MuMu 模拟器抓屏持续返回空画面(全黑), '
-            '请确认模拟器窗口可见(未被最小化/遮挡)且未开启「后台保活」, 然后重试'
-        )
+                f'MuMu 抓屏返回空画面(全黑), 第 {attempt} 次, '
+                f'登录/加载期的黑屏属正常现象, 冗余等待窗口还剩 {remaining:.1f}s')
+            if not ipc_reset or attempt % BLACK_FRAME_MAX_RETRY == 0:
+                # 重建 IPC 连接(缓冲区可能真的失效了)。
+                # 第一帧黑就重建一次; 之后若仍连续黑, 每 BLACK_FRAME_MAX_RETRY 次再重建一次,
+                # 避免加载期无休止地重连。
+                ipc_reset = True
+                self.reset_nemu()
+            time.sleep(min(BLACK_FRAME_RETRY_INTERVAL, remaining))
 
     def connected(self):
         return True

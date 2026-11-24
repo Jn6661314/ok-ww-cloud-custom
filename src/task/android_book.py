@@ -153,15 +153,6 @@ def find_icon_candidates(frame):
     return boxes
 
 
-def is_book_opened(frame, min_icons=OPENED_MIN_ICONS, min_spread=OPENED_MIN_SPREAD):
-    """安卓端索拉指南是否已打开(左列是否出现足够多、且竖向铺开的类别图标)。"""
-    boxes = find_icon_candidates(frame)
-    if len(boxes) < min_icons:
-        return False
-    ys = [(b[1] + b[3]) // 2 for b in boxes]
-    return bool((max(ys) - min(ys)) >= min_spread)
-
-
 def _template_variants(template):
     """模板的两种掩码口径(灰度 / 笔画), 各裁到笔画外接框。"""
     variants = []
@@ -230,3 +221,56 @@ def find_book_tab(frame, template, iou_threshold=DEFAULT_IOU):
     if best is None or best[4] < iou_threshold:
         return None
     return best
+
+
+def count_book_tabs(frame, templates, iou_threshold=DEFAULT_IOU):
+    """找出左列能配上的类别图标(模板法)。
+
+    连通域启发式在真实安卓书界面上偏严(未选中的图标笔画偏淡, 常常凑不满
+    min_icons 个), 会把"书已经打开"误判成"没打开" —— 表现为脚本反复点右上角
+    图标(点一下关掉、再点一下打开), 书的状态来回翻, 后续点击全落在错误位置。
+    模板法(和 find_book_tab 同一套笔画 IoU 配对)在实测中稳定认得出左列图标,
+    所以用它做补充判据。
+
+    注意: 大世界画面左上角偶尔也会撞出 1~2 个高分假匹配(实测 re_world 画面
+    撞出 gray_book_weekly 0.78 / gray_book_all_monsters 0.91), 所以调用方还要
+    配合"数量 + 竖向跨度"一起判断, 不能只看分数。
+
+    :param frame: 当前帧 (BGR)
+    :param templates: PC 端类别图标模板列表 (BGR)
+    :return: [(cx, cy, width, height, score), ...]
+    """
+    if frame is None or not templates:
+        return []
+    matched = []
+    for template in templates:
+        hit = find_book_tab(frame, template, iou_threshold=iou_threshold)
+        if hit is not None:
+            matched.append(hit)
+    return matched
+
+
+# 模板法判定"书已打开"所需的最小图标数与竖向跨度(像素)。
+# 书界面实测 4 个图标分布在 y≈191/322/461/727(跨度 536);
+# 大世界里的假匹配挤在一起(跨度 < 30), 用跨度就能把两者分开。
+TEMPLATE_MIN_ICONS = 3
+TEMPLATE_MIN_SPREAD = 200
+
+
+def is_book_opened(frame, templates=None, min_icons=OPENED_MIN_ICONS, min_spread=OPENED_MIN_SPREAD):
+    """安卓端索拉指南是否已打开(左列是否出现足够多、且竖向铺开的类别图标)。
+
+    :param templates: 可选的 PC 类别图标模板列表, 给定时作为补充判据
+    """
+    boxes = find_icon_candidates(frame)
+    if len(boxes) >= min_icons:
+        ys = [(b[1] + b[3]) // 2 for b in boxes]
+        if (max(ys) - min(ys)) >= min_spread:
+            return True
+    if templates:
+        matched = count_book_tabs(frame, templates)
+        if len(matched) >= TEMPLATE_MIN_ICONS:
+            ys = [m[1] for m in matched]
+            if (max(ys) - min(ys)) >= TEMPLATE_MIN_SPREAD:
+                return True
+    return False

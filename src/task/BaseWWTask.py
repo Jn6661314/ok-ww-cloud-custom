@@ -38,6 +38,20 @@ CLOUD_START_COOLDOWN = 60
 # so retry quickly a couple of times, then back off to avoid restarting the queue.
 CLOUD_START_COOLDOWNS = (0, 8, 30, CLOUD_START_COOLDOWN)
 CLOUD_ENTER_TIMEOUT = 600
+# 「传送」按钮的两套判据:
+#   1) PC 模板 —— fast_travel_custom(地图上的黑色圆点) / gray_teleport(灰色传送点)
+#      / remove_custom。点开"残像聚落"后地图上出现灰色传送点时走这一套。
+#   2) OCR  —— 新界面(云游戏/移动端)点开聚落后, 右侧详情页底部是一个黑底白字的
+#      「快速旅行」按钮, PC 模板在上面完全匹配不上(实测最高匹配度只有 0.02~0.28,
+#      阈值 0.7 永远达不到), 只能靠 OCR 认字定位。
+#      OCR 文本可能是"快速旅行", 也可能夹空格, 所以精确串 + 容错正则一起用。
+TRAVEL_BUTTON_TEXTS = ('快速旅行', re.compile(r'快\s*速\s*旅\s*行'))
+TRAVEL_BUTTON_SEARCH_BOX = (0.4, 0.55, 1.0, 1.0)
+# 传送确认弹窗: PC 有 confirm_btn_* 模板, 移动端/新界面模板同样匹配不上, 用 OCR 兜底。
+CONFIRM_BUTTON_TEXTS = ('确认', '確定', '确定', re.compile(r'确\s*认|確\s*認'))
+CONFIRM_BUTTON_SEARCH_BOX = (0.3, 0.3, 0.7, 0.85)
+# 安卓索拉指南左列的类别图标(PC 模板), 用于判断书是否已经打开
+ANDROID_BOOK_TAB_FEATURES = ('gray_book_quest', 'gray_book_boss', 'gray_book_weekly', 'gray_book_all_monsters')
 f_white_color = {
     'r': (235, 255),  # Red range
     'g': (235, 255),  # Green range
@@ -1253,16 +1267,25 @@ class BaseWWTask(BaseTask):
         self.click_box(gray_book_boss, after_sleep=1.5)
         return gray_book_boss
 
-    def open_touch_book(self, time_out=12):
+    def open_touch_book(self, time_out=20):
         """安卓端打开索拉指南: 点右上角图标栏里的方框书本图标(取代 PC 的 F2 键)。
+
+        移动端打开指南书要 1~3 秒, 点完立刻判断常常会误判成"没打开", 于是脚本
+        会反复点那个图标(点一下关掉、再点一下打开), 书的状态来回翻, 后面所有
+        点击都落在错误的位置。所以这里改成: 先看是不是已经开着, 没开才点;
+        点完给几秒钟等它开出来。
 
         点完会确认左列是否出现竖排类别图标; 没出现就再点一次 ——
         书本来就开着时再点图标反而会把它关掉, 所以必须靠确认决定要不要补点。
         """
         deadline = time.time() + time_out
         while True:
-            self.click_relative(*TOUCH_BOOK_CLICK, after_sleep=2)
             if self.touch_book_opened():
+                self.log_debug('touch book opened')
+                return True
+            self.click_relative(*TOUCH_BOOK_CLICK, after_sleep=1)
+            if self.wait_until(self.touch_book_opened, time_out=4, settle_time=0.5,
+                               raise_if_not_found=False):
                 self.log_debug('touch book opened')
                 return True
             if time.time() >= deadline:
@@ -1276,10 +1299,19 @@ class BaseWWTask(BaseTask):
         if frame is None:
             return False
         try:
-            return android_book.is_book_opened(frame)
+            return android_book.is_book_opened(frame, templates=self.android_book_templates())
         except Exception as e:
             self.log_debug(f'touch_book_opened failed: {e}')
             return False
+
+    def android_book_templates(self):
+        """安卓索拉指南左列的类别图标模板(PC 模板, 用于笔画 IoU 配对)。"""
+        templates = []
+        for feature in ANDROID_BOOK_TAB_FEATURES:
+            template = self.get_feature_template(feature)
+            if template is not None:
+                templates.append(template)
+        return templates
 
     def find_android_book_tab(self, feature='gray_book_quest'):
         """在安卓索拉指南左列里定位指定类别图标。
@@ -1353,6 +1385,40 @@ class BaseWWTask(BaseTask):
                 if feature.name != 'remove_custom':
                     self.wait_click_skip_dialog_confirm()
                 return True
+
+    def find_travel_button(self, threshold=0.7):
+        """定位「传送」按钮。
+
+        先用 PC 模板(fast_travel_custom / gray_teleport / remove_custom);
+        模板匹配不上时(云游戏/移动端的"快速旅行"按钮)退回 OCR 认字。
+
+        :return: Box(名称是模板名或 OCR 文字); 找不到返回 None
+        """
+        for feature_name in ('fast_travel_custom', 'gray_teleport', 'remove_custom'):
+            if box := self.find_one(feature_name, threshold=threshold):
+                return box
+        return self.find_travel_button_by_ocr()
+
+    def find_travel_button_by_ocr(self):
+        """OCR 找「快速旅行」按钮(右侧详情页底部的黑底白字按钮)。"""
+        for box in self.ocr(*TRAVEL_BUTTON_SEARCH_BOX, match=list(TRAVEL_BUTTON_TEXTS)):
+            self.log_debug(f'travel button by ocr: {box}')
+            return box
+        return None
+
+    def find_confirm_button(self, threshold=0.6):
+        """定位弹窗里的确认按钮: 先用 PC 模板, 再用 OCR 认「确认/确定」。"""
+        for feature_name in ('confirm_btn_hcenter_vcenter', 'confirm_btn_highlight_hcenter_vcenter'):
+            if box := self.find_one(feature_name, threshold=threshold):
+                return box
+        return self.find_confirm_button_by_ocr()
+
+    def find_confirm_button_by_ocr(self):
+        """OCR 找弹窗里的「确认/确定」按钮。"""
+        for box in self.ocr(*CONFIRM_BUTTON_SEARCH_BOX, match=list(CONFIRM_BUTTON_TEXTS)):
+            self.log_debug(f'confirm button by ocr: {box}')
+            return box
+        return None
 
     def click_confirm(self, timeout=1):
         self.wait_click_feature(
