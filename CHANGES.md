@@ -177,3 +177,12 @@
 - **补全触屏功能键**（`ok/device/interaction_methods/keys.py`）：`ADB_KEY_MAP` 新增 `F1-F12 → KEYCODE_F1..F12`，使触屏指南书 `F2` 合法；此前已补 `A-Z/0-9/` `` ` ``。
 - **恢复清单**：`restore.py` 新增 `src/task/touch_mode.py`（现 25 项），避免后续更新覆盖；三处目录（working/repo/补丁仓库）一致，语法检查通过。
 - **说明**：本模式层已把"返回/菜单"语义键位集中，`wait main` 在 MuMu 下将发 `` ` ``；此前误判 `` ` `` 触发剧情的那次实为登录超时重连载入画面（用户澄清）。未再实机验证（游戏处于超时重载，避免继续操作导致会话中断），需下次在线时确认。
+
+## 二十、2026-11-24 补充：MuMu 模拟器窗口化操作（PC 式输入）
+
+- **问题本质（用户指正）**：MuMu 模拟器就是一个 Windows 窗口，用户已在模拟器里把游戏键位映射配好。而 OKWW 对 adb 设备固定用 `ADBInteraction`（`input keyevent`/`input tap`）——这是直接给安卓系统发按键，**完全绕过模拟器的键位映射**：`KEYCODE_BACK` 在主界面弹"是否确定退出游戏"、键位表里的 `` ` ``（菜单/跳过）从未生效。正确做法是与 PC 客户端/云游戏一致：向模拟器窗口发真实键盘/鼠标消息，由模拟器键位映射转成游戏操作。
+- **框架改动**（`ok/device/DeviceManager.py`）：`do_start` 的 adb 分支原本无条件强制 `ADBInteraction`，现尊重显式配置的 interaction（`config['interaction']` + `win_interaction_class`，且需 `hwnd_window` 存在），未配置时保持原行为，对其他用户零影响。
+- **配置改动**（`config.py` adb 段）：`capture_method: 'windows'`（MuMu 窗口截图，走 WGC）+ `interaction: 'PostMessage'`。键盘按键（esc、`` ` ``、f2、WASD 等）经 `vk_key_dict`/`VkKeyScan` 转 VK 码 PostMessage 给 MuMu 窗口；鼠标点击由 MuMu 转成触屏 tap。
+- **连带修复**：`MouseResetTask` 在 adb 下每 10 秒刷的 `'ADBCaptureMethod' object has no attribute 'get_abs_cords'` 随截图通道切到 PC 侧而消失（`BaseCaptureMethod` 本有该方法）。
+- **TouchMode 兼容**：`src/task/touch_mode.py` 发的 `` ` ``/`f2` 在 PostMessage 下同样合法（VkKeyScan 转 VK 码），语义键位无需修改；`ADB_KEY_MAP` 保留给仍选 ADBInteraction 的场景。
+- **恢复清单**：`restore.py` 新增 `ok/device/DeviceManager.py`（现 26 项）。三处目录一致，语法检查通过。生效需重启 OKWW。

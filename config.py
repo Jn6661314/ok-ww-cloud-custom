@@ -229,11 +229,14 @@ config = {
         'check_night_light': True,
         'force_no_night_light': False,
     },
-    # 本地安卓模拟器入口（MuMu/雷电等）：ADB 设备会出现在设备选择列表，
-    # 截图通道可在连接弹窗里选 "ADB"（通用，后台可用但较慢）或 "Ipc"（MuMu 12，快）。
+    # 本地安卓模拟器入口（MuMu/雷电等）：ADB 设备会出现在设备选择列表。
+    # 模拟器本身就是 Windows 窗口：截图与输入都走窗口通道（与 PC 客户端/云游戏一致），
+    # 键盘按键经模拟器自己的键位映射转成游戏操作，不再使用 adb input keyevent
+    # （keyevent 会绕过键位映射，esc 变成安卓返回键甚至触发"退出游戏"弹窗）。
     'adb': {
         'packages': ['com.kurogame.mingchao', 'com.kurogame.wutheringwaves'],
-        'capture_method': 'adb',
+        'capture_method': 'windows',
+        'interaction': 'PostMessage',
     },
     'browser': {
         'url': 'https://mc.kurogames.com/cloud/#/',

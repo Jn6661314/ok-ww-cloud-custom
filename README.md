@@ -1,5 +1,9 @@
 ## 更新日志
 
+**2026-11-24（MuMu 模拟器窗口化操作：像 PC 客户端一样输入）**
+
+- **模拟器输入改为 PC 键盘/鼠标消息**：以前 adb 设备固定用 `input keyevent`/`input tap`——这是直接给安卓系统发按键，**绕过了 MuMu 的键位映射**，导致 esc 变成安卓返回键、主界面弹出"退出游戏"、键位表完全没被用上。现在（`config.py` + `ok/device/DeviceManager.py`）：模拟器的截图与输入都走 Windows 窗口通道（`capture_method: windows` + `interaction: PostMessage`），与 PC 客户端/云游戏完全一致——发真实键盘/鼠标消息给 MuMu 窗口，由模拟器自己的键位映射转成游戏操作。顺带修复了 `MouseResetTask` 在 adb 下刷 `get_abs_cords` 报错的问题（PC 截图类本有该方法）。
+
 **2026-11-24（安卓触屏专用操作模式）**
 
 - **安卓键位/操作抽成独立模式层**（`src/task/touch_mode.py`）：以前"打开菜单"和"返回/关闭"两种语义都压在 `esc` 上，触屏下又被全局映射成 `KEYCODE_BACK`，导致 MuMu 里 `wait main` 一直触发返回、打不开菜单（实测主界面发 `KEYCODE_BACK` 弹的是"是否确定退出游戏"）。现把触屏操作集中到一个模式层：安卓端「返回=打开菜单」是同一个按钮，按你给的键位表用 `` ` ``（菜单/跳过 → `KEYCODE_GRAVE`）；指南书用 `F2`。PC/云游戏行为完全不变（仍走各自的 `esc`）。`is_main`、`open_esc_menu`、`openF2Book` 已改走该入口。

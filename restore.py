@@ -61,6 +61,8 @@ RELATIVE_FILES = [
     'ok/device/capture_methods/browser_webrtc.py',
     # MCP 端口冲突自适应: EACCES(输入法占用 0.0.0.0:8765)时自动换端口
     'ok/core/mcp_server.py',
+    # 模拟器(MuMu)窗口化操作: adb 设备尊重配置的 interaction(PostMessage), 截图走窗口通道
+    'ok/device/DeviceManager.py',
 ]
 
 
