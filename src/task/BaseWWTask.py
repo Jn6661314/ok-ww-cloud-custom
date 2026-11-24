@@ -12,7 +12,7 @@ import cv2
 
 from src.Labels import Labels
 from src.scene.WWScene import WWScene
-from src.task.touch_mode import TouchMode
+from src.task.touch_mode import TouchMode, TOUCH_MENU_BACK_KEY
 
 logger = Logger.get_logger(__name__)
 number_re = re.compile(r'(\d+)')
@@ -55,6 +55,28 @@ class BaseWWTask(BaseTask):
         self.scene: WWScene | None = None
         # 安卓触屏/PC/云 语义操作统一入口(返回与打开菜单在触屏是同一个按钮)
         self.touch = TouchMode(self)
+
+    def back(self, *args, after_sleep=0, **kwargs):
+        """安卓触屏统一返回语义: back == 打开菜单 == 键位表的 ` 键(KEYCODE_GRAVE)。
+
+        基类 back() 会发 esc(ADB 下即 KEYCODE_BACK), 在 MuMu 等模拟器上会弹
+        "确定退出游戏"而不是返回/菜单。触屏下所有 back() 一律走 ` 键;
+        PC/云游戏行为不变。
+        """
+        if self.touch.is_touch:
+            self.send_key(TOUCH_MENU_BACK_KEY, after_sleep=after_sleep)
+        else:
+            super().back(*args, after_sleep=after_sleep, **kwargs)
+
+    def send_key(self, key, down_time=0.02, interval=-1, after_sleep=0):
+        """触屏下把所有 esc 改写为键位表的 ` 键(返回/菜单是同一个按钮)。
+
+        覆盖 BaseCombatTask / DailyTask / CombatCheck 等散落的 send_key('esc'),
+        无需逐个修改; ADB 输入通道下 ` 会映射为 KEYCODE_GRAVE。
+        """
+        if self.touch.is_touch and str(key).lower() in ('esc', 'escape'):
+            key = TOUCH_MENU_BACK_KEY
+        return super().send_key(key, down_time=down_time, interval=interval, after_sleep=after_sleep)
 
     @property
     def logged_in(self):

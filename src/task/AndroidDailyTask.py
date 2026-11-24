@@ -21,7 +21,8 @@ class AndroidDailyTask(DailyTask):
         self.group_icon = task_icon('category-daily')
         self.description = (
             '安卓模拟器专用：配置开关与每日任务完全一致，当前设备为 MuMu/安卓时使用。'
-            '返回/菜单走键位表映射（` 键），指南书用 F2。请先选择 MuMu/安卓设备。'
+            '返回/打开菜单统一走键位表的 ` 键（触屏下返回=菜单=同一按钮，不会误触'
+            '退出游戏弹窗），指南书直接点击右上角索拉指南图标。请先选择 MuMu/安卓设备。'
         )
 
     def run(self):

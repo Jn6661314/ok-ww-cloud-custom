@@ -36,11 +36,25 @@ class TouchMode:
 
     @property
     def is_touch(self):
-        """当前是否为安卓触屏/模拟器(ADB)设备。"""
+        """当前是否走 ADB 触屏键位(安卓模拟器且输入通道为 ADB)。
+
+        注意: 若配置成"像 PC 一样给模拟器窗口发键盘消息"(PostMessage/Pynput 等
+        窗口消息交互), esc 本身就是 PC 语义, 不做触屏改写 —— 只有真正走
+        ADBInteraction(input keyevent) 时才把 esc 语义换成键位表的 ` 键。
+        """
         try:
-            return bool(self.task.is_adb())
+            if not self.task.is_adb():
+                return False
+            interaction = getattr(self.task.executor, 'interaction', None)
+            if interaction is None:
+                return True
+            from ok.device.interaction_methods.adb import ADBInteraction
+            return isinstance(interaction, ADBInteraction)
         except Exception:
-            return False
+            try:
+                return bool(self.task.is_adb())
+            except Exception:
+                return False
 
     @property
     def is_cloud(self):
