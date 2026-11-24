@@ -724,10 +724,13 @@ class DeviceManager:
                 # with real keyboard/mouse messages, so the emulator's own game
                 # keymap translates them — instead of raw `input keyevent`, which
                 # bypasses the emulator keymap entirely.
-                if (self.config.get('interaction')
+                if (self.config.get('capture') == 'windows'
+                        and self.config.get('interaction')
                         and self.win_interaction_class is not None
                         and self.win_interaction_class is not ADBInteraction
-                        and self.hwnd_window is not None):
+                        and self.hwnd_window is not None
+                        and self.capture_method is not None
+                        and hasattr(self.capture_method, 'get_abs_cords')):
                     if not isinstance(self.interaction, self.win_interaction_class):
                         self.interaction = self.win_interaction_class(self.capture_method, self.hwnd_window)
                     else:
