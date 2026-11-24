@@ -40,6 +40,8 @@ RELATIVE_FILES = [
     'src/task/RahaiBlocksTask.py',
     'src/task/DailyTask.py',
     'src/task/BaseWWTask.py',
+    # 安卓触屏专用操作模式层(返回/菜单=键位表 `, 指南书 F2, PC/云不变)
+    'src/task/touch_mode.py',
     'src/task/account/MultiAccountConfigStore.py',
     'src/gui/MultiAccountConfigTab.py',
     'src/gui/MultiAccountConfigDialog.py',
@@ -57,6 +59,8 @@ RELATIVE_FILES = [
     'ok/device/interaction_methods/keys.py',
     # v3.8.14 官方新增: 合并版 browser.py 依赖的 WebRTC 抓屏模块
     'ok/device/capture_methods/browser_webrtc.py',
+    # MCP 端口冲突自适应: EACCES(输入法占用 0.0.0.0:8765)时自动换端口
+    'ok/core/mcp_server.py',
 ]
 
 

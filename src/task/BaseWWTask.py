@@ -12,6 +12,7 @@ import cv2
 
 from src.Labels import Labels
 from src.scene.WWScene import WWScene
+from src.task.touch_mode import TouchMode
 
 logger = Logger.get_logger(__name__)
 number_re = re.compile(r'(\d+)')
@@ -52,6 +53,8 @@ class BaseWWTask(BaseTask):
         self.key_config = self.get_global_config('Game Hotkey')  # 游戏热键配置
         self.next_monthly_card_start = 0
         self.scene: WWScene | None = None
+        # 安卓触屏/PC/云 语义操作统一入口(返回与打开菜单在触屏是同一个按钮)
+        self.touch = TouchMode(self)
 
     @property
     def logged_in(self):
@@ -752,7 +755,7 @@ class BaseWWTask(BaseTask):
             return self.in_team_and_world()
         if esc:
             self.log_debug('main esc')
-            self.back(after_sleep=2)
+            self.touch.back(after_sleep=2)
             return False
 
     def find_cloud_disconnect(self):
@@ -1060,6 +1063,10 @@ class BaseWWTask(BaseTask):
         return 'unknown_lang'
 
     def open_esc_menu(self):
+        if self.touch.is_touch:
+            # 安卓端返回/打开菜单是同一个按钮(KEYCODE_BACK); PC 的 Alt+点击在触屏上无效。
+            self.touch.open_menu(after_sleep=0.5)
+            return
         self.send_key_down('alt')
         self.sleep(0.05)
         self.click_relative(0.95, 0.04)
@@ -1093,7 +1100,7 @@ class BaseWWTask(BaseTask):
         if hasattr(self, 'reset_to_false'):
             self.reset_to_false('opening book')
         self.ensure_main()
-        book_key = self.key_config.get('Guidebook Key', self.key_config.get('索拉指南', 'f2'))
+        book_key = self.touch.book_key() or self.key_config.get('Guidebook Key', self.key_config.get('索拉指南', 'f2'))
         self.log_info(self.tr('click {book_key} to open the book').format(book_key=book_key))
         if self.in_team_and_world():
             self.send_key(book_key, after_sleep=4)

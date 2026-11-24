@@ -153,6 +153,8 @@ ADB_KEY_MAP = {
     'scroll_lock': 'KEYCODE_SCROLL_LOCK',
     'printscreen': 'KEYCODE_SYSRQ',
     'print_screen': 'KEYCODE_SYSRQ',
+    # 功能键 F1-F12: 指南书(F2)等游戏热键在触屏下需要合法 KEYCODE。
+    **{f'f{i}': f'KEYCODE_F{i}' for i in range(1, 13)},
     # 鸣潮键位表用到的字母/数字键: A-Z, 0-9 -> KEYCODE_A..Z / KEYCODE_0..9。
     # 触屏(ADB)模式下 send_key('f') 原本会原样透传成非法的 `input keyevent f`,
     # 安卓不认识小写键名, 游戏收不到任何事件; 补全后才是合法的 KEYCODE_F。

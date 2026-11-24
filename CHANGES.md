@@ -163,3 +163,17 @@
 - **备份**：两个 restore.py 清单新增 `browser_webrtc.py`（合并版 browser.py 依赖它，避免恢复到旧环境时导入失败）。custom-backup 现 24 项，cloud-custom 现 23 项。
 - **验证**：关键文件语法编译通过；browser.py 与 browser_webrtc.py 可正常 import；config 加载确认 version=v3.8.14 / capture=webrtc / 云任务齐全；24 个定制文件 working/repo/备份三处 md5 一致；两个恢复清单完整且语法正确；官方非冲突文件哈希与 e2cc611 一致（未被定制污染）。
 - **注意**：WebRTC 抓屏与旧 WGC 的视觉表现不同（只抓视频流、页面元素周围为黑），且本机未登录云游戏、无 MuMu ADB 连接，无法实测云鸣潮在 WebRTC 下的抓屏/切号/后台表现。如遇异常，可把 `config.py` 里 `'capture': 'webrtc'` 改回 `'wgc'` 并重启（定制的后台伪装仍生效）。
+
+## 十八、2026-11-24 补充：MCP 端口冲突自适应
+
+- **修复 MCP 服务器开启报 `[Errno 13]`**（`ok/core/mcp_server.py`）：本机百度输入法（`BaiduPinyin.exe`）常驻监听 `0.0.0.0:8765`，OKWW 绑 `127.0.0.1:8765` 时 Windows 返回 `EACCES(13 / winerror 10013)`，而非通常的 `EADDRINUSE(10048)`；原 `bind_mcp_socket` 只认后者，直接把 EACCES 抛出，GUI 弹"MCP 服务器错误"。现把 `EACCES/10013` 一并视作端口冲突，自动递增到可用端口（实测 8765 冲突→8766 绑定成功）。实际端口经 `getsockname()` 写回 connection 文件，客户端动态发现，无需改配置、也无需关闭输入法。
+- **恢复清单**：cloud-custom 的 `restore.py` 新增 `ok/core/mcp_server.py`（现 24 项），避免后续更新/恢复把该修复覆盖；清单完整性检查通过。
+- **关于"MuMu 打开菜单"的实测结论（未改动代码）**：通过 MCP 在 MuMu/ADB 下实测——反引号 `` ` ``（KEYCODE_GRAVE）会触发剧情/过场（即键位表里的"跳过"语义），返回键 KEYCODE_BACK 在主界面会弹"是否确定退出游戏？"对话框。二者都不是"打开系统菜单"，因此撤销了先前把 `is_main` adb 分支改成发反引号的改动，恢复原 `back()`。触屏版"打开菜单"的正确操作仍需确认（可能是点屏幕上的终端/菜单按钮），确认后再做。
+
+## 十九、2026-11-24 补充：安卓触屏专用操作模式层
+
+- **新增 `src/task/touch_mode.py`（安卓键位模式层）**：把散落在各 task 的 `is_adb()/is_browser()` 判断与触屏键位集中到一处。核心原则（按用户确认）：安卓端「返回」和「打开菜单」**是同一个按钮**，就是键位表里的"菜单/跳过"键 `` ` ``（→ `KEYCODE_GRAVE`），不是 `KEYCODE_BACK`（实测主界面发 `KEYCODE_BACK` 弹"是否确定退出游戏"）。`TouchMode` 提供 `is_touch/is_cloud`、`back()/open_menu()`（触屏发 `` ` ``，PC/云维持原 `back()`=esc）、`book_key()`（触屏 F2）。`BaseWWTask` 持有 `self.touch`，PC/云行为零变化。
+- **接入点**（`src/task/BaseWWTask.py`）：`is_main(esc=True)` 的返回分支、`open_esc_menu()`（触屏不再做 PC 式 Alt+点击）、`openF2Book()` 的指南书键，均改走 `self.touch`。`setup` 时在 `__init__` 创建助手。
+- **补全触屏功能键**（`ok/device/interaction_methods/keys.py`）：`ADB_KEY_MAP` 新增 `F1-F12 → KEYCODE_F1..F12`，使触屏指南书 `F2` 合法；此前已补 `A-Z/0-9/` `` ` ``。
+- **恢复清单**：`restore.py` 新增 `src/task/touch_mode.py`（现 25 项），避免后续更新覆盖；三处目录（working/repo/补丁仓库）一致，语法检查通过。
+- **说明**：本模式层已把"返回/菜单"语义键位集中，`wait main` 在 MuMu 下将发 `` ` ``；此前误判 `` ` `` 触发剧情的那次实为登录超时重连载入画面（用户澄清）。未再实机验证（游戏处于超时重载，避免继续操作导致会话中断），需下次在线时确认。
