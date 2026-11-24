@@ -55,6 +55,8 @@ RELATIVE_FILES = [
     'ok/device/capture_methods/windows_graphics.py',
     # ADB/触屏模式下 esc 映射为安卓返回键
     'ok/device/interaction_methods/keys.py',
+    # v3.8.14 官方新增: 合并版 browser.py 依赖的 WebRTC 抓屏模块
+    'ok/device/capture_methods/browser_webrtc.py',
 ]
 
 

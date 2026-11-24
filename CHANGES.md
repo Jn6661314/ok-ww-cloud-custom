@@ -150,3 +150,16 @@
 - **修复**（`ok/device/interaction_methods/keys.py`）：补全 a-z → `KEYCODE_A`..`KEYCODE_Z`、0-9 → `KEYCODE_0`..`KEYCODE_9`；反引号 `` ` ``/grave/backtick → `KEYCODE_GRAVE`（用户明确指出菜单/跳过是反引号而非 esc）。此表仅 ADB 交互使用，PC 与云游戏浏览器模式不受影响。
 - **验证**：代码用到的 13 个键现全部映射为合法 keyevent；`ADB['f']==KEYCODE_F` / `ADB['esc']==KEYCODE_BACK` / `ADB['\`']==KEYCODE_GRAVE` 断言通过；PC 端 `vk_key_dict['ESC']==27` 未改动；语法检查与两处恢复清单完整性通过。
 - 仍待触屏实测：MuMu 的 ADB 调试端口本机连不上（16384/7555 拒绝），无法实测按键是否真正驱动游戏；若补全后仍无反应，需要开 ADB 调试或游戏截图进一步定位（可能要走坐标点击而非 keyevent）。
+
+## 十七、2026-11-24 完整更新到官方 v3.8.14（ok-script 3.0.13 WebRTC）
+
+- **官方新特性**：云游戏抓屏从「截浏览器窗口（WGC）」改为「直接读游戏视频流（WebRTC）」，浏览器最小化也可截图；浏览器启动失败后重启无需重启 ok-ww；任务出错保存截图到 `screenshots/error/`；拉海洛方块落点预览不匹配不再每次截图。官方改动 13 个文件（含新增 `ok/device/capture_methods/browser_webrtc.py`）。
+- **冲突分析**：13 个改动文件中 3 个与定制重叠——`config.py`、`ok/device/capture_methods/browser.py`、`src/task/RahaiBlocksTask.py`。`browser.py` 官方改 182 行并新增 WebRTC 模块，定制改 87 行（Cookie/账号 profile、后台输入伪装、UID 遮挡），自动三方合并失败，改为以官方新版为底逐块手工移植。
+- **合并结果**：
+  - `browser.py`：官方 WebRTC 代码 100% 保留，移植 5 处定制（两个 JS 常量、per-account user_data_dir、storage_state 恢复 + 后台/UID init script、复用页面 evaluate、storage_state 保存）。与官方新版差异仅 5 处新增块，无官方代码删除。
+  - `config.py`：以 v3.8.14 官方版为底，保留官方 `'capture': 'webrtc'`，加回 custom_tabs、adb 段、user_data_dir、nick、云多账号任务列表。
+  - `RahaiBlocksTask.py`：以定制版（含 `_go_now_button`、云恢复、浏览器交互）为底，同步删除官方那行 `screenshot("rahai_preview_mismatch")`。
+- **更新动作**：repo 快进到官方 `e2cc611`（v3.8.14），官方非冲突文件（CHANGELOG/README/TaskExecutor/layout/browser_webrtc）保持纯官方内容；24 个定制文件写回 working/repo 并同步两套备份；`app.json` 版本 v3.8.13→v3.8.14，复位 update_state。
+- **备份**：两个 restore.py 清单新增 `browser_webrtc.py`（合并版 browser.py 依赖它，避免恢复到旧环境时导入失败）。custom-backup 现 24 项，cloud-custom 现 23 项。
+- **验证**：关键文件语法编译通过；browser.py 与 browser_webrtc.py 可正常 import；config 加载确认 version=v3.8.14 / capture=webrtc / 云任务齐全；24 个定制文件 working/repo/备份三处 md5 一致；两个恢复清单完整且语法正确；官方非冲突文件哈希与 e2cc611 一致（未被定制污染）。
+- **注意**：WebRTC 抓屏与旧 WGC 的视觉表现不同（只抓视频流、页面元素周围为黑），且本机未登录云游戏、无 MuMu ADB 连接，无法实测云鸣潮在 WebRTC 下的抓屏/切号/后台表现。如遇异常，可把 `config.py` 里 `'capture': 'webrtc'` 改回 `'wgc'` 并重启（定制的后台伪装仍生效）。

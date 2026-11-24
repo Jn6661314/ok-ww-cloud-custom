@@ -23,14 +23,12 @@ LOGIN_CLICK_SETTLE_TIME = 4  # seconds; keep below AutoLoginTask trigger_interva
 CLOUD_DISCONNECT_TEXTS = re.compile(r'云服务错误|服务器断开|断开连接')
 CLOUD_EXIT_GAME_TEXTS = re.compile(r'^(退出游戏|确定)$')
 CLOUD_RELOGIN_TIMEOUT = 600
-# 云游戏从首页点"进入游戏"到真正加载进大世界可能要几分钟(排队/启动/加载资源)。
-# 期间首页按钮仍在, 若每次轮询都点会反复重启排队导致永远进不去, 因此点击后要冷却。
+# CLOUD ACCOUNT ENTRY PATCH: cloud game can take minutes to load after clicking
+# "进入游戏"; the home-page button stays visible, so clicks must be throttled.
 CLOUD_START_COOLDOWN = 60
-# 分级冷却(秒): 第一次点击有时不会真正生效, 需要很快再点一次; 但一直高频点又会重启排队。
-# 同一阶段内按点击次数取冷却: 立即 → 8s → 30s → 之后 60s。
-# 阶段变化(平台"开始游戏" → 游戏"进入游戏")会重置计数, 让新阶段也能立即点一次。
+# Graded cooldown (seconds): the first "开始游戏" click often does not register,
+# so retry quickly a couple of times, then back off to avoid restarting the queue.
 CLOUD_START_COOLDOWNS = (0, 8, 30, CLOUD_START_COOLDOWN)
-# "进入游戏"点击后, 页面可能先出现加载/排队画面, 用这个时长等待首个"进入完成"信号。
 CLOUD_ENTER_TIMEOUT = 600
 f_white_color = {
     'r': (235, 255),  # Red range
@@ -825,9 +823,9 @@ class BaseWWTask(BaseTask):
 
             if start := self.find_boxes(texts, boundary='bottom_right', match=["开始游戏", re.compile("进入游戏")]):
                 if not self.find_boxes(texts, boundary='bottom_right', match=LOGIN_TEXTS):
-                    # 云游戏点"进入游戏"后要排队/加载几分钟, 期间按钮仍在。
-                    # 但"开始游戏"经常第一次点击不生效, 需要很快再点一次才能进去。
-                    # 用分级冷却: 前两次间隔短(快速重试), 之后逐步拉长防止连点重启排队。
+                    # CLOUD ACCOUNT ENTRY PATCH: graded cooldown. The first "开始游戏"
+                    # click often does not register, so retry quickly; then back off so
+                    # polling does not restart the cloud queue during loading.
                     now = time.time()
                     clicks = getattr(self, '_cloud_start_clicks', 0)
                     cooldown = CLOUD_START_COOLDOWNS[min(clicks, len(CLOUD_START_COOLDOWNS) - 1)]
@@ -846,27 +844,18 @@ class BaseWWTask(BaseTask):
                     return False
 
     def wait_cloud_game_ready(self, time_out=CLOUD_ENTER_TIMEOUT):
-        """云鸣潮专用: 从首页点"进入游戏"并等待云端真正加载完成进入大世界。
+        """CLOUD ACCOUNT ENTRY PATCH: wait until the cloud game fully entered.
 
-        云游戏和本地客户端不同, 点"进入游戏"后要经历排队/启动远程实例/加载资源,
-        可能持续几分钟。期间首页的"进入游戏"按钮仍在, 直接复用 wait_login 会
-        高频连点反复重启排队。本方法负责:
-          1. 点一次"进入游戏"(带冷却, 由 wait_login 内部节流保证)
-          2. 全程识别"进入完成"信号: 已在大世界 / 登录框(自动登录后点登录) /
-             月卡 / 云断线弹窗(重进), 并做相应处理
-          3. 未进入前耐心等待, 不重复点击
-
-        返回 True 表示已进入游戏并回到大世界(可以开始跑任务)。
+        Reuses the same detection chain as the local daily mode via
+        ``ensure_main``: is_main() checks in_team_and_world (reached the game
+        world), wait_login (login box / "进入游戏" button, now throttled),
+        handle_monthly_card and handle_cloud_disconnect (reconnect).  logged_in
+        is reset by the caller so ensure_main widens its timeout automatically;
+        esc=False avoids backing out to the cloud home during loading.
         """
         self.log_info(self.tr('Waiting for cloud game to finish entering...'), notify=True)
-        # 重置冷却与重试计数, 让本次切换可以立即点一次"进入游戏", 并允许后续快速重试。
         self._cloud_start_click_time = 0
         self._cloud_start_clicks = 0
-        # 复用与本地每日相同的 ensure_main 检测链: is_main() 依次识别
-        #   已进大世界(in_team_and_world) / 登录框与"进入游戏"(wait_login) /
-        #   月卡(handle_monthly_card) / 云断线重进(handle_cloud_disconnect)。
-        # 这里 logged_in=False, ensure_main 会自动把超时放宽到 600s;
-        # esc=False 避免加载期间误触返回键退回云游戏首页。
         self.ensure_main(esc=False, time_out=time_out)
         self.log_info(self.tr('Cloud game entered successfully'), notify=True)
         return True
