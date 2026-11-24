@@ -142,3 +142,11 @@
 - **修复**（`ok/device/interaction_methods/keys.py`）：`ADB_KEY_MAP['esc']` 由 `KEYCODE_ESCAPE` 改为 `KEYCODE_BACK`（安卓返回键）。该映射表仅 ADB 交互使用，PC（PostMessage/Pynput）与云游戏浏览器模式均不受影响。
 - **验证**：语法检查通过；映射断言 `ADB esc == KEYCODE_BACK` 且 `PC vk ESC == 27`（未改动）通过；两个备份恢复清单完整性检查通过。
 - 说明：这是触屏适配的第一步（低风险的「返回/关闭」类）。「打开菜单/战斗技能点按屏幕」需要标定触屏坐标，尚未实现。
+
+## 十六、2026-11-24 补充：ADB 触屏键位表补全（A-Z / 0-9 / 反引号）
+
+- **背景**：用户提供了鸣潮安卓版操作键位表（WASD 移动、Q/E/R 技能、F 交互、M 地图、C 角色、1~2 切人、`` ` `` 菜单/跳过等），据此核对代码实际发送的按键。
+- **根因**：`ADB_KEY_MAP` 只定义了 esc/enter/space/方向键/修饰键等，`src/` 里用到的 8 个字母键（f/m/z/w/r/d/c/a）没有映射，在 ADB 交互下被原样透传成 `input keyevent f` 这类非法命令，安卓不认识小写键名，游戏收不到任何事件——这才是日常任务在 MuMu 触屏模式下大面积失效的主因，比 esc 问题更严重。
+- **修复**（`ok/device/interaction_methods/keys.py`）：补全 a-z → `KEYCODE_A`..`KEYCODE_Z`、0-9 → `KEYCODE_0`..`KEYCODE_9`；反引号 `` ` ``/grave/backtick → `KEYCODE_GRAVE`（用户明确指出菜单/跳过是反引号而非 esc）。此表仅 ADB 交互使用，PC 与云游戏浏览器模式不受影响。
+- **验证**：代码用到的 13 个键现全部映射为合法 keyevent；`ADB['f']==KEYCODE_F` / `ADB['esc']==KEYCODE_BACK` / `ADB['\`']==KEYCODE_GRAVE` 断言通过；PC 端 `vk_key_dict['ESC']==27` 未改动；语法检查与两处恢复清单完整性通过。
+- 仍待触屏实测：MuMu 的 ADB 调试端口本机连不上（16384/7555 拒绝），无法实测按键是否真正驱动游戏；若补全后仍无反应，需要开 ADB 调试或游戏截图进一步定位（可能要走坐标点击而非 keyevent）。

@@ -153,6 +153,15 @@ ADB_KEY_MAP = {
     'scroll_lock': 'KEYCODE_SCROLL_LOCK',
     'printscreen': 'KEYCODE_SYSRQ',
     'print_screen': 'KEYCODE_SYSRQ',
+    # 鸣潮键位表用到的字母/数字键: A-Z, 0-9 -> KEYCODE_A..Z / KEYCODE_0..9。
+    # 触屏(ADB)模式下 send_key('f') 原本会原样透传成非法的 `input keyevent f`,
+    # 安卓不认识小写键名, 游戏收不到任何事件; 补全后才是合法的 KEYCODE_F。
+    **{c: f'KEYCODE_{c.upper()}' for c in 'abcdefghijklmnopqrstuvwxyz'},
+    **{d: f'KEYCODE_{d}' for d in '0123456789'},
+    # 菜单/跳过键是反引号 `(鸣潮键位表), 不是 esc。
+    '`': 'KEYCODE_GRAVE',
+    'grave': 'KEYCODE_GRAVE',
+    'backtick': 'KEYCODE_GRAVE',
 }
 
 XBUTTON1 = 0x0001
