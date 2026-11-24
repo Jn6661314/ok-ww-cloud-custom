@@ -1112,19 +1112,22 @@ class BaseWWTask(BaseTask):
         if hasattr(self, 'reset_to_false'):
             self.reset_to_false('opening book')
         self.ensure_main()
-        book_key = self.touch.book_key() or self.key_config.get('Guidebook Key', self.key_config.get('索拉指南', 'f2'))
-        self.log_info(self.tr('click {book_key} to open the book').format(book_key=book_key))
-        if self.in_team_and_world():
-            self.send_key(book_key, after_sleep=4)
-            self.log_info(self.tr('send {book_key} key to open').format(book_key=book_key))
-        if self.in_team_and_world():
-            self.log_info(self.tr('send f2 key mouse key to open the book'))
-            self.send_key_down('alt')
-            self.sleep(0.05)
-            self.click_relative(0.77, 0.05)
-            self.sleep(0.02)
-            self.send_key_up('alt')
-            self.sleep(4)
+        if self.in_team_and_world() and self.touch.open_book():
+            self.log_info(self.tr('click guidebook icon (touch) to open the book'))
+        else:
+            book_key = self.key_config.get('Guidebook Key', self.key_config.get('索拉指南', 'f2'))
+            self.log_info(self.tr('click {book_key} to open the book').format(book_key=book_key))
+            if self.in_team_and_world():
+                self.send_key(book_key, after_sleep=4)
+                self.log_info(self.tr('send {book_key} key to open').format(book_key=book_key))
+            if self.in_team_and_world():
+                self.log_info(self.tr('send f2 key mouse key to open the book'))
+                self.send_key_down('alt')
+                self.sleep(0.05)
+                self.click_relative(0.77, 0.05)
+                self.sleep(0.02)
+                self.send_key_up('alt')
+                self.sleep(4)
         gray_book_boss = self.wait_book(feature)
         if not gray_book_boss:
             self.log_error(self.tr("can't find gray_book_boss, make sure f2 is the hotkey for book"), notify=True)

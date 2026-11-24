@@ -13,7 +13,7 @@
 集中到一处, 对外提供语义化入口:
   - is_touch / is_cloud : 当前设备模式判定
   - back() / open_menu(): 返回=打开菜单(同一个按钮, 触屏为键位表的 ` -> KEYCODE_GRAVE)
-  - book_key()          : 指南书按键(触屏 F2 -> KEYCODE_F2, 其余走 key_config)
+  - open_book()         : 指南书(触屏直接点右上角索拉指南图标, 其余走按键)
 
 以后要调整触屏键位或某个操作的触屏手法, 只改这一处, 不用再翻遍每个 task。
 """
@@ -21,7 +21,11 @@
 # 触屏语义键位(统一在 ADB_KEY_MAP 里映射成合法 KEYCODE_*)。
 # 键位表: [ ` ] = 菜单/跳过; 触屏的返回与打开菜单是同一个按钮, 就是它。
 TOUCH_MENU_BACK_KEY = '`'  # -> ADB_KEY_MAP -> KEYCODE_GRAVE (返回 = 打开菜单 = 菜单/跳过键)
-TOUCH_BOOK_KEY = 'f2'      # -> ADB_KEY_MAP -> KEYCODE_F2    (索拉指南)
+
+# 索拉指南(触屏): 触屏 UI 的 F2 未必被模拟器键位映射捕获, 改为直接点击
+# 右上角图标栏里的索拉指南按钮。坐标来自用户在 MuMu 1278x719 截图上
+# 标注的红框中心 (932, 44) -> (0.7293, 0.0612)。
+TOUCH_BOOK_CLICK = (0.7293, 0.0612)
 
 
 class TouchMode:
@@ -57,6 +61,10 @@ class TouchMode:
         """打开/切换系统菜单。安卓端与返回是同一个按钮(键位表的 `)。"""
         self.back(after_sleep=after_sleep)
 
-    def book_key(self):
-        """指南书按键: 触屏用 F2, 其余返回 None 交给 key_config。"""
-        return TOUCH_BOOK_KEY if self.is_touch else None
+    def open_book(self, after_sleep=4):
+        """打开索拉指南。触屏直接点右上角图标栏的指南按钮(用户标注红框位置);
+        非触屏返回 False, 由调用方走按键(key_config / F2)。"""
+        if self.is_touch:
+            self.task.click_relative(*TOUCH_BOOK_CLICK, after_sleep=after_sleep)
+            return True
+        return False
