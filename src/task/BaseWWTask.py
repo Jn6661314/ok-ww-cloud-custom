@@ -12,8 +12,9 @@ import cv2
 
 from src.Labels import Labels
 from src.scene.WWScene import WWScene
-from src.task.touch_mode import TouchMode, TOUCH_MENU_BACK_KEY
+from src.task.touch_mode import TouchMode, TOUCH_MENU_BACK_KEY, TOUCH_BOOK_CLICK, TOUCH_ACTIVITY_CLICK
 from src.task import android_world
+from src.task import android_book
 
 logger = Logger.get_logger(__name__)
 number_re = re.compile(r'(\d+)')
@@ -1224,8 +1225,12 @@ class BaseWWTask(BaseTask):
         if hasattr(self, 'reset_to_false'):
             self.reset_to_false('opening book')
         self.ensure_main()
-        if self.in_team_and_world() and self.touch.open_book():
+        if self.touch.is_touch:
+            # 安卓触屏没有 F2 键: 一律点右上角"索拉指南"图标(方框书本)。
+            # 这里绝不能回落到 send_key('f2') —— 安卓端发 F2 什么也不会发生,
+            # 只会白等 wait_book 超时然后抛"make sure f2 is the hotkey for book"。
             self.log_info(self.tr('click guidebook icon (touch) to open the book'))
+            self.open_touch_book()
         else:
             book_key = self.key_config.get('Guidebook Key', self.key_config.get('索拉指南', 'f2'))
             self.log_info(self.tr('click {book_key} to open the book').format(book_key=book_key))
@@ -1247,6 +1252,86 @@ class BaseWWTask(BaseTask):
         self.sleep(2)
         self.click_box(gray_book_boss, after_sleep=1.5)
         return gray_book_boss
+
+    def open_touch_book(self, time_out=12):
+        """安卓端打开索拉指南: 点右上角图标栏里的方框书本图标(取代 PC 的 F2 键)。
+
+        点完会确认左列是否出现竖排类别图标; 没出现就再点一次 ——
+        书本来就开着时再点图标反而会把它关掉, 所以必须靠确认决定要不要补点。
+        """
+        deadline = time.time() + time_out
+        while True:
+            self.click_relative(*TOUCH_BOOK_CLICK, after_sleep=2)
+            if self.touch_book_opened():
+                self.log_debug('touch book opened')
+                return True
+            if time.time() >= deadline:
+                self.log_warning(self.tr('安卓端未能打开索拉指南(右上角图标点击无响应)'))
+                return False
+            self.sleep(1)
+
+    def touch_book_opened(self):
+        """安卓端索拉指南是否已打开(左列是否出现竖排类别图标)。"""
+        frame = self.executor.nullable_frame()
+        if frame is None:
+            return False
+        try:
+            return android_book.is_book_opened(frame)
+        except Exception as e:
+            self.log_debug(f'touch_book_opened failed: {e}')
+            return False
+
+    def find_android_book_tab(self, feature='gray_book_quest'):
+        """在安卓索拉指南左列里定位指定类别图标。
+
+        安卓端的索拉指南是移动端布局, 类别图标与 PC 模板尺寸/位置都不同,
+        直接用 PC 模板做 NCC 会命中背景空白(见 src/task/android_book.py),
+        因此改用笔画掩码 + 多尺度 IoU 配对。
+        """
+        frame = self.executor.nullable_frame()
+        if frame is None:
+            self.log_debug('find_android_book_tab: no frame available')
+            return None
+        template = self.get_feature_template(feature)
+        if template is None:
+            self.log_debug(f'find_android_book_tab: template {feature} not found')
+            return None
+        hit = android_book.find_book_tab(frame, template)
+        if hit is None:
+            self.log_debug(f'find_android_book_tab: {feature} not matched in the left column')
+            return None
+        x, y, width, height, score = hit
+        self.log_debug(f'find_android_book_tab: {feature} @ ({x},{y}) iou={score:.3f}')
+        return Box(x=x - width // 2, y=y - height // 2, width=width, height=height,
+                   confidence=score, name=feature)
+
+    def get_feature_template(self, feature):
+        """取某个模板的原始图片(BGR), 拿不到返回 None。"""
+        feature_set = getattr(self.executor, 'feature_set', None)
+        if feature_set is None or not feature:
+            return None
+        try:
+            feature_set.ensure_feature(feature)
+            item = feature_set.feature_dict.get(feature)
+        except Exception as e:
+            self.log_debug(f'get_feature_template({feature}) failed: {e}')
+            return None
+        if item is None:
+            return None
+        return getattr(item, 'mat', None)
+
+    def open_activity(self, after_sleep=4):
+        """打开活动面板(PC 端为 F1 键)。
+
+        安卓触屏端没有 F1, 改为点右上角图标栏里索拉指南图标左边的"活动"图标。
+        """
+        if self.touch.open_activity(after_sleep=after_sleep):
+            self.log_info(self.tr('click activity icon (touch) to open the event panel'))
+            return True
+        activity_key = self.key_config.get('Activity Key', self.key_config.get('活动', 'f1'))
+        self.log_info(self.tr('click {activity_key} to open the event panel').format(activity_key=activity_key))
+        self.send_key(activity_key, after_sleep=after_sleep)
+        return False
 
     def click_traval_button(self):
         for feature_name in ['fast_travel_custom', 'gray_teleport', 'remove_custom']:
@@ -1330,6 +1415,14 @@ class BaseWWTask(BaseTask):
         self.wait_until(self.click_traval_button, raise_if_not_found=True, time_out=10)
 
     def wait_book(self, feature="gray_book_all_monsters", time_out=3):
+        if self.touch.is_touch:
+            # 安卓端索拉指南是移动端布局, PC 的 gray_book_* 模板定位不到
+            # (实测 NCC 全部命中背景空白), 改用笔画掩码 + 多尺度 IoU 配对。
+            gray_book_boss = self.wait_until(
+                lambda: self.find_android_book_tab(feature),
+                time_out=time_out, settle_time=1)
+            logger.info(f'found {feature} {gray_book_boss}')
+            return gray_book_boss
         gray_book_boss = self.wait_until(
             lambda: self.find_one(feature, box='box_gray_book',
                                   threshold=0.3),
