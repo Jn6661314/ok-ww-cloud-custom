@@ -44,6 +44,8 @@ RELATIVE_FILES = [
     'src/task/touch_mode.py',
     # MuMu/安卓专用每日任务(继承 DailyTask, 配置一致, 仅限定 adb 设备)
     'src/task/AndroidDailyTask.py',
+    # MouseResetTask 兼容: IPC/ADB 截图无 get_abs_cords 时跳过(纯 PC 功能)
+    'src/task/MouseResetTask.py',
     'src/task/account/MultiAccountConfigStore.py',
     'src/gui/MultiAccountConfigTab.py',
     'src/gui/MultiAccountConfigDialog.py',

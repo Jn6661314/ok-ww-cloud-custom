@@ -1033,7 +1033,13 @@ class BaseWWTask(BaseTask):
         # ensure_main 超时抛异常 -> 错误恢复反复重启(死循环)。此时直接跳过检测。
         if getattr(self, 'logged_in', True) and not self.should_check_monthly_card():
             return False
+        # 登录阶段的场景误报(角色/场景酷似弹窗模板)会让 is_main 一直 return False
+        # 而永远走不到 back()/菜单键, 卡死在 "wait main esc=True"。连续 3 次
+        # "检测到月卡却没回到大世界" 就认定误报, 本次运行跳过检测, 让 is_main 继续走 esc。
+        if getattr(self, '_monthly_card_claim_failed', 0) >= 3:
+            return False
         monthly_card = self.find_monthly_card()
+        entered = False
         # self.screenshot('monthly_card1')
         if monthly_card is not None:
             # self.screenshot('monthly_card1')
@@ -1049,8 +1055,14 @@ class BaseWWTask(BaseTask):
             # 只有确认领完月卡回到大世界才把检查推到明天; 否则视为误判, 保留检查以便真正领取。
             if entered:
                 self.set_check_monthly_card(next_day=True)
-        # logger.debug(f'check_monthly_card {monthly_card}')
-        return monthly_card is not None
+                self._monthly_card_claim_failed = 0
+            else:
+                self._monthly_card_claim_failed = getattr(self, '_monthly_card_claim_failed', 0) + 1
+                if self._monthly_card_claim_failed >= 3:
+                    self.log_info(self.tr('monthly_card detected but claim failed repeatedly, skip this run'))
+        # 返回值改为"确实领完回到大世界": 仅检测到模板(可能是误报)不再让 is_main 短路,
+        # 这样 is_main 会继续走 esc/back, 不会卡在 wait main。
+        return monthly_card is not None and entered
 
     @property
     def game_lang(self):
