@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -138,6 +140,63 @@ def restore_workshop_cache(working: Path, stamp: str, do_backup: bool) -> int:
     return 0
 
 
+def read_source_version():
+    """从仓库 config.py 读取 ``version`` 常量。"""
+    try:
+        text = (FILES / 'config.py').read_text(encoding='utf-8')
+    except OSError:
+        return None
+    match = re.search(r"""^version\s*=\s*['"]([^'"]+)['"]""", text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def sync_app_version(working: Path, stamp: str, do_backup: bool) -> int:
+    """让启动器显示的版本号与 config.py 的 version 保持一致。
+
+    ``data/apps/ok-ww/app.json`` 的 ``current_version`` 是 pyappify 记录"已安装版本"
+    的地方：启动器（ok-ww.exe）用它显示版本号，也用它判断"有没有新版本可更新"。
+
+    我们的代码基线上移后如果这里不动，启动器会一直显示旧版本号，并且认为还能更新到
+    基线的那个版本 —— 用户一点更新，官方代码就会覆盖 working/repo，整套定制全部丢失。
+    """
+    version = read_source_version()
+    if not version:
+        print('[app.json] 读不到 config.py 的 version，跳过版本同步')
+        return 0
+    app_json = working.parent / 'app.json'
+    if not app_json.is_file():
+        print(f'[app.json] 未找到 {app_json}，跳过版本同步')
+        return 0
+    try:
+        data = json.loads(app_json.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        print(f'[app.json] 读取失败（{error}），跳过版本同步')
+        return 0
+    if not isinstance(data, dict):
+        print('[app.json] 内容不是 JSON 对象，跳过版本同步')
+        return 0
+    current = data.get('current_version')
+    if current == version:
+        print(f'[app.json] 启动器版本已是 {version}，无需同步')
+        return 0
+    if do_backup:
+        try:
+            shutil.copy2(app_json, app_json.with_name(f'app.json.{stamp}.bak'))
+        except OSError as error:
+            print(f'[app.json] 备份失败（{error}），跳过版本同步')
+            return 0
+    data['current_version'] = version
+    try:
+        app_json.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n',
+                            encoding='utf-8')
+    except OSError as error:
+        print(f'[app.json] 写入失败（{error}）')
+        return 0
+    print(f'[app.json] 启动器版本 {current} -> {version}'
+          '（避免启动器误以为还能更新到该版本而覆盖定制）')
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('working', nargs='?', type=Path,
@@ -164,6 +223,7 @@ def main(argv=None) -> int:
         return 1
     if restore_workshop_cache(args.working, stamp, not args.no_backup):
         return 1
+    sync_app_version(args.working, stamp, not args.no_backup)
     if not args.working_only:
         if restore_to(args.repo, stamp, not args.no_backup, 'repo'):
             return 1
@@ -174,6 +234,8 @@ def main(argv=None) -> int:
     print('  - MuMu/安卓：设备下拉里会出现模拟器，抓屏默认 MuMu IPC，键位由模拟器映射转发')
     print('  - PC 客户端：行为与官方一致')
     print('账号 Cookie（cloud_profiles）、多账号配置和任务配置（configs）未改动，无需重新配置。')
+    print('启动器（ok-ww.exe）显示的版本号已同步为 config.py 的 version，'
+          '不会再提示更新到同一版本而覆盖定制。')
     return 0
 
 

@@ -53,6 +53,15 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
 7. 如果之后官方更新把补丁覆盖了：关闭 ok-ww 后运行 python restore.py 或双击
    一键恢复.bat；大版本结构变化则重跑第 4 步的安装脚本。详见 docs/backup-and-restore.md。
 
+【版本号的坑：启动器和应用内读的是两个地方】
+   - 应用内「关于」页 / 日志的版本来自 working/config.py 的 version（本补丁为 v3.8.15）；
+   - 启动器（ok-ww.exe）窗口显示的版本来自 data/apps/ok-ww/app.json 的 current_version。
+     若那里还是 v3.8.14，启动器不仅显示错误，还会认为"可以更新到 3.8.15"——
+     用户一点更新，官方代码就覆盖 working/repo，**整套定制全部丢失**。
+   - restore.py 每次部署都会自动把 current_version 同步成 config.py 的 version（改前备份
+     app.json.<时间戳>.bak）。所以务必用 restore.py 部署，不要手动只拷 .py 文件。
+   - 用户报"版本还是 3.8.14"时：先看是启动器还是应用内；两者不一致就让其重跑 restore.py。
+
 【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
    a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是
       更老的官方版（如 v3.8.14），先让用户把官方 ok-ww 更新到 v3.8.15 再装补丁。

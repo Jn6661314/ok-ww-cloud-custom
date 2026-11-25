@@ -8,6 +8,7 @@
 
 ### 2026-11-25
 
+- **[v1.8.2](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.2)** — **修掉「本地版本显示 3.8.14」**：代码基线早就是 v3.8.15（`config.py::version`、启动日志、应用内「关于」页都是 3.8.15），但**启动器**（ok-ww.exe）读的是 `data/apps/ok-ww/app.json` 里的 `current_version`，那里还留着装 3.8.14 时的值。除了显示不对，它还让启动器以为"可以更新到 3.8.15" —— **一旦点更新，官方代码会覆盖 `working`/`repo`，整套定制全丢**。现在 `restore.py` 每次部署都会把 `app.json.current_version` 对齐到 `config.py::version`（改前自动备份 `app.json.<时间戳>.bak`），9 项单测覆盖（版本不同改写、相同不动、无文件/坏 JSON 安全跳过）。
 - **[v1.8.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.1)** — **修正远控/串流窗口的入口位置说明**：它是左侧导航栏「游戏」分组里的独立页（图标=显示器），**不在「设置」页里**（`show_at_tab` 配置项会被设置页主动跳过），此前文档写的「设置 → …」让人找不到；同时修掉配置名含 `/` 导致配置被写成 `configs/远控/串流窗口.json` 子目录的问题（改为 `远控串流窗口(试验性)`，文件落回 `configs/` 根下），`MuMu/安卓 Config` 一并改为 `MuMu 安卓 Config`，并加单测禁止全局配置名再出现斜杠。
 - **[v1.8.0](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.0)** — **试验性支持把远控 / 串流软件窗口当 PC 设备**（UU远程、ToDesk、向日葵、Parsec、Moonlight）：设置里「远控/串流窗口(试验性)」填窗口标题关键字，设备下拉即出现该窗口，走 windows 抓屏 + Pynput 真实键鼠，与 PC 客户端同一条链路；启动时校验客户区 16:9 并禁用自动 resize，比例不对会给出实际尺寸与修正建议。附带完整的硬性要求（被控电脑游戏全屏 16:9、远控画质原画、窗口前台、管理员运行、鼠标绝对定位）。
 - **[v1.7.0](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.7.0)** — **把 MuMu / 安卓模拟器支持加回来**（官方 v3.8.15 基线不变）：设备下拉重新出现模拟器，抓屏默认 MuMu IPC（全黑帧自动重连），键位由模拟器映射转发（esc→返回/菜单、F1-F12、A-Z、0-9、反引号），断线弹窗自动确认重登，编队识别改为「手填编队 > 缩放识别投票锁定」并在战斗期零识别；**拉海洛方块支持 MuMu**（模拟器窗口 Pynput 输入 + 返回键兜底），无尽模式与关卡页直接启动一并可用。
@@ -313,7 +314,7 @@ ok/util/window.py          WGC 可用性判定不再被 Win11 门禁误伤
 tools/                      安装、patch、工坊缓存下载与 Release 发布脚本
   publish_release.py         把 releases/*.md 发布成 GitHub Release（自动打 tag）
 releases/                   各版本的完整改动明细（中英双语，发布脚本的正文来源）
-tests/                      新增/修改的单元测试（215 项）
+tests/                      新增/修改的单元测试（226 项）
 docs/                       多账号配置说明、备份恢复说明
 workshop_cache/             工坊离线索引（teams.json + teams/*.json）
 restore.py / 一键恢复.bat   官方更新覆盖后的一键恢复
