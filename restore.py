@@ -28,59 +28,32 @@ DEFAULT_BASE = (Path.home() / 'AppData' / 'Local' / 'ok-ww'
                 / 'data' / 'apps' / 'ok-ww')
 
 # 我们改动/新增的全部文件（相对 working / repo 根目录）
+# 基线：官方 ok-ww v3.8.15（ok-script 3.0.14）。只保留云端（云鸣潮）相关的
+# 定制 + 少量通用修复；MuMu/安卓相关改动在 legacy-mumu-v1.5.21 分支上，未合并。
 RELATIVE_FILES = [
     'config.py',
+    # 框架最小补丁：CDP 调用超时（防云游戏假死卡住任务）+ 后台输入。
+    # 其余框架改动已全部回退，避免与官方 ok-script 分叉。
     'ok/device/capture_methods/browser.py',
+    # 云鸣潮：每个账号一个浏览器 profile（纯 okww 侧目录切换，不改框架）
     'src/cloud_browser.py',
     'src/cloud_recovery.py',
-    'src/task/CloudDailyTask.py',
-    'src/task/CloudMultiAccountTask.py',
-    'src/task/SaveCloudAccountCookieTask.py',
-    'src/task/SwitchCloudAccountTask.py',
-    'src/task/RahaiBlocksTask.py',
-    'src/task/rahai_blocks.py',
-    'src/task/DailyTask.py',
-    'src/task/BaseWWTask.py',
-    # 安卓触屏专用操作模式层(返回/菜单=键位表 `, 指南书 F2, PC/云不变)
-    'src/task/touch_mode.py',
-    # MuMu/安卓专用每日任务(继承 DailyTask, 配置一致, 仅限定 adb 设备)
-    'src/task/AndroidDailyTask.py',
-    # 安卓端"在大世界且在队伍中"判定(安卓队伍栏是圆形头像, 没有 PC 的 1/2/3 数字徽章)
-    'src/task/android_world.py',
-    # 安卓端索拉指南(PC 的 F2)类别图标定位: 移动端布局, 用笔画掩码+多尺度 IoU 配对
-    'src/task/android_book.py',
-    # MuMu IPC 抓屏黑帧拦截: 全黑帧重建连接重试, 连续失败抛明确异常而不是静默卡住
-    'ok/device/capture_methods/nemu_ipc.py',
-    # 梦魇聚落(残象聚落)传送: 聚落详情页的"快速旅行"按钮在云游戏/安卓端是
-    # 黑底白字, 模板匹配不上, 改用 OCR 识别 + 兜底确认按钮
-    'src/task/NightmareNestTask.py',
-    # MouseResetTask 兼容: IPC/ADB 截图无 get_abs_cords 时跳过(纯 PC 功能)
-    'src/task/MouseResetTask.py',
+    # 多账号：云游戏分支 + 「保存登录状态/切换账号」按钮（仅云设备显示）
+    'src/task/MultiAccountDailyTask.py',
     'src/task/account/MultiAccountConfigStore.py',
     'src/gui/MultiAccountConfigTab.py',
     'src/gui/MultiAccountConfigDialog.py',
-    # 从上游历史恢复: 自定义编队代码(自定义轴) + 队伍工坊
+    # 云鸣潮适配：活跃度读不到时不按 0 处理；先约电台在浏览器下不吞 Alt
+    'src/task/DailyTask.py',
+    # 官方 v3.8.15 的拉海洛方块（未含无尽模式）；搜索预算修复在 rahai_blocks.py
+    'src/task/RahaiBlocksTask.py',
+    'src/task/rahai_blocks.py',
+    # 爱弥斯：变奏入场就输出（上游要求双队友满协奏退场, 实战几乎不成立）
+    'src/char/Aemeath.py',
+    # 自定义轴（队伍代码/工坊）
     'src/gui/CharacterCodeTab.py',
     'src/char/CustomCharLoader.py',
     'src/char/CharFactory.py',
-    'src/char/Aemeath.py',
-    'src/task/BaseCombatTask.py',
-    # AutoCombatTask 触发任务: MuMu 队伍识别抖动时不能让 None.perform()/普通异常
-    # 冒泡到 TaskExecutor 把触发任务 disable, 否则自动战斗会"打着打着自己关了"。
-    'src/task/AutoCombatTask.py',
-    # 怪物消失后自动退出战斗
-    'src/combat/CombatCheck.py',
-    # Win10 云鸣潮兼容 (WGC 可用性门禁 + 去除黄色边框)
-    'ok/util/window.py',
-    'ok/device/capture_methods/windows_graphics.py',
-    # ADB/触屏模式下 esc 映射为安卓返回键
-    'ok/device/interaction_methods/keys.py',
-    # v3.8.14 官方新增: 合并版 browser.py 依赖的 WebRTC 抓屏模块
-    'ok/device/capture_methods/browser_webrtc.py',
-    # MCP 端口冲突自适应: EACCES(输入法占用 0.0.0.0:8765)时自动换端口
-    'ok/core/mcp_server.py',
-    # 模拟器(MuMu)窗口化操作: adb 设备尊重配置的 interaction(PostMessage), 截图走窗口通道
-    'ok/device/DeviceManager.py',
 ]
 
 
@@ -170,7 +143,8 @@ def main(argv=None) -> int:
             return 1
 
     print('')
-    print('恢复完成。请启动 ok-ww，选择「云游戏」设备后运行云鸣潮任务。')
+    print('恢复完成。请启动 ok-ww，选设备「云游戏」后照常运行日常/多账号任务；')
+    print('多账号任务的设置页在云设备下会多出「保存登录状态」「切换账号」两个按钮。')
     print('账号 Cookie（cloud_profiles）和任务配置（configs）未改动，无需重新配置。')
     return 0
 

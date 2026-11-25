@@ -1,19 +1,17 @@
 """Per-account browser profiles for 云鸣潮 (cloud Wuthering Waves).
 
-ok-script's ``BrowserCaptureMethod`` launches a Playwright persistent context in
-one fixed directory (``cache/playwright``).  Consequently every account shares
-the same cookie jar, and the multi-account task cannot keep several accounts
-logged in at the same time.
+ok-script launches the browser with one fixed persistent profile
+(``cache/playwright``), so every account shares the same cookie jar and two
+accounts cannot stay logged in at the same time.
 
-This module gives each account its own Chromium profile under
-``data/cloud_profiles/<account>/``.  A small, optional patch to ok-script (see
-``tools/patch_ok_script_browser.py``) makes the launch read the active profile
-directory and automatically restore/save ``storage_state.json`` (cookies plus
-localStorage).  Without that patch the module still works for *live* switching:
-``activate()`` writes cookies/localStorage into the already running context.
+This module keeps one complete Chromium profile per account under
+``data/cloud_profiles/<account>/`` and swaps the whole directory in and out of
+``cache/playwright`` while the browser is closed.  Nothing in ok-script has to
+change: the framework keeps using ``cache/playwright`` and simply finds the
+other account's cookies there.
 
-The module deliberately uses only the standard library so it can be imported
-from ``config.py`` before the GUI framework is up.
+The module only uses the standard library plus the framework's capture classes,
+so it can also be imported from ``config.py`` before the GUI is up.
 """
 
 from __future__ import annotations
@@ -31,8 +29,11 @@ from pathlib import Path
 CONFIG_FOLDER = Path('configs')
 DATA_FOLDER = Path('data')
 STATE_FILE = CONFIG_FOLDER / 'cloud_browser.json'
-LEGACY_PROFILE = Path('cache') / 'playwright'
-ENV_PROFILE = 'OK_WW_CLOUD_PROFILE'
+# The directory ok-script hardcodes for the browser's persistent profile.
+LIVE_PROFILE = Path('cache') / 'playwright'
+# Marker inside the live profile telling which account it currently belongs to.
+MARKER_NAME = '.okww_account'
+DEFAULT_ACCOUNT = 'default'
 
 _SAFE_RE = re.compile(r'[^A-Za-z0-9._-]+')
 
@@ -50,7 +51,7 @@ def profiles_root() -> Path:
 
 
 def profile_dir(account_key: str | None) -> Path:
-    return profiles_root() / (safe_account_name(account_key) if account_key else 'default')
+    return profiles_root() / (safe_account_name(account_key) if account_key else DEFAULT_ACCOUNT)
 
 
 def storage_state_path(account_key: str | None) -> Path:
@@ -72,7 +73,7 @@ def get_active_account() -> str | None:
 
 
 def set_active_account(account_key: str | None) -> Path:
-    """Persist the active account and expose its profile to ok-script."""
+    """Remember which account's profile the cloud device should start with."""
     target = profile_dir(account_key)
     target.mkdir(parents=True, exist_ok=True)
     state = _read_state()
@@ -92,17 +93,7 @@ def set_active_account(account_key: str | None) -> Path:
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()
-    os.environ[ENV_PROFILE] = str(target.resolve())
     return target
-
-
-def current_profile_dir() -> str:
-    """Callable used as ``config['browser']['user_data_dir']``.
-
-    It is evaluated by ok-script when the browser actually launches, so an
-    account switch during a multi-account run is honoured by the next launch.
-    """
-    return str(profile_dir(get_active_account()).resolve())
 
 
 def list_profiles() -> list[str]:
@@ -112,21 +103,114 @@ def list_profiles() -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.is_dir())
 
 
-def migrate_legacy_profile(account_key: str | None = None) -> Path:
-    """Move an existing ``cache/playwright`` profile into the default account.
+# --- profile directory swapping ------------------------------------------------
 
-    Run once when upgrading an installation that already has a cloud login.
+def _read_marker(profile: Path) -> str | None:
+    try:
+        with (profile / MARKER_NAME).open(encoding='utf-8') as stream:
+            account = json.load(stream).get('account')
+        return str(account) if account else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _write_marker(profile: Path, account_key: str | None) -> None:
+    try:
+        profile.mkdir(parents=True, exist_ok=True)
+        with (profile / MARKER_NAME).open('w', encoding='utf-8') as stream:
+            json.dump({'account': account_key or DEFAULT_ACCOUNT}, stream)
+    except OSError as error:  # pragma: no cover - filesystem only
+        print(f'cloud_browser: failed to write profile marker: {error}', file=sys.stderr)
+
+
+def _replace_dir(source: Path, target: Path) -> None:
+    """Move ``source`` onto ``target``, replacing it (same volume: rename only)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        retired = target.with_name(target.name + '.retired')
+        if retired.exists():
+            shutil.rmtree(retired, ignore_errors=True)
+        try:
+            os.replace(target, retired)
+        except OSError:  # pragma: no cover - target locked by a running browser
+            shutil.rmtree(target, ignore_errors=True)
+        else:
+            shutil.rmtree(retired, ignore_errors=True)
+    try:
+        os.replace(source, target)
+    except OSError:  # pragma: no cover - cross-volume fallback
+        shutil.copytree(source, target, dirs_exist_ok=True)
+        shutil.rmtree(source, ignore_errors=True)
+
+
+def live_profile_account() -> str | None:
+    """Which account the browser profile at ``cache/playwright`` belongs to."""
+    return _read_marker(LIVE_PROFILE)
+
+
+def profile_matches(account_key: str | None) -> bool:
+    """True when ``cache/playwright`` already holds ``account_key``'s login state."""
+    return bool(account_key) and LIVE_PROFILE.is_dir() and live_profile_account() == account_key
+
+
+def prepare_live_profile(account_key: str | None) -> bool:
+    """Make the live profile directory belong to ``account_key``.
+
+    Must only be called while the browser is closed: Windows locks the files of
+    a running Chromium profile.  Returns True when the directory already held
+    that account (nothing was swapped).
+    """
+    account_key = account_key or DEFAULT_ACCOUNT
+    if profile_matches(account_key):
+        set_active_account(account_key)
+        return True
+
+    if LIVE_PROFILE.exists():
+        # Whoever is logged in right now keeps the session they just used.
+        _replace_dir(LIVE_PROFILE, profile_dir(live_profile_account() or DEFAULT_ACCOUNT))
+
+    saved = profile_dir(account_key)
+    if saved.exists():
+        _replace_dir(saved, LIVE_PROFILE)
+    else:
+        LIVE_PROFILE.mkdir(parents=True, exist_ok=True)
+    _write_marker(LIVE_PROFILE, account_key)
+    set_active_account(account_key)
+    return False
+
+
+def adopt_live_profile(account_key: str | None) -> bool:
+    """Claim the profile already open in the browser for ``account_key``.
+
+    Used on the first run after upgrading: the browser is logged in but no
+    per-account profile exists yet, so the live directory becomes that account's
+    profile instead of being replaced by an empty one (which would log the user
+    out for no reason).
+    """
+    if not account_key or not LIVE_PROFILE.is_dir() or live_profile_account():
+        return False
+    _write_marker(LIVE_PROFILE, account_key)
+    set_active_account(account_key)
+    return True
+
+
+def migrate_legacy_profile(account_key: str | None = None) -> Path:
+    """Move an existing ``cache/playwright`` profile into an account folder.
+
+    Used once when upgrading an installation that was already logged in but has
+    no per-account profiles yet.
     """
     target = profile_dir(account_key)
-    if target.exists() and any(target.iterdir()):
-        return target
-    if LEGACY_PROFILE.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(LEGACY_PROFILE), str(target))
+    if LIVE_PROFILE.exists() and not profile_matches(account_key):
+        _replace_dir(LIVE_PROFILE, target)
+        _write_marker(target, account_key)
     else:
         target.mkdir(parents=True, exist_ok=True)
+        _write_marker(target, account_key)
     return target
 
+
+# --- live browser helpers ------------------------------------------------------
 
 def get_browser_capture(task=None):
     """Return the running BrowserCaptureMethod, or None in PC-client mode."""
@@ -161,39 +245,6 @@ async def _save_async(capture, path: Path) -> bool:
         return False
 
 
-async def _load_async(capture, path: Path) -> bool:
-    context = getattr(capture, 'browser', None)
-    if context is None or not path.exists():
-        return False
-    try:
-        with path.open(encoding='utf-8') as stream:
-            state = json.load(stream)
-        cookies = state.get('cookies') or []
-        if cookies:
-            await context.clear_cookies()
-            await context.add_cookies(cookies)
-        page = getattr(capture, 'page', None)
-        origins = state.get('origins') or []
-        if page is not None and origins:
-            url = getattr(page, 'url', '') or ''
-            for origin in origins:
-                origin_url = str(origin.get('origin', ''))
-                if origin_url and not url.startswith(origin_url):
-                    continue
-                items = [(str(item.get('name', '')), str(item.get('value', '')))
-                         for item in origin.get('localStorage', [])]
-                if items:
-                    await page.evaluate(
-                        """items => { localStorage.clear();
-                            for (const [name, value] of items) localStorage.setItem(name, value); }""",
-                        items,
-                    )
-        return True
-    except Exception as error:  # pragma: no cover - depends on live browser
-        print(f'cloud_browser: failed to load storage state: {error}', file=sys.stderr)
-        return False
-
-
 async def _reload_async(capture) -> bool:
     page = getattr(capture, 'page', None)
     if page is None:
@@ -220,7 +271,7 @@ async def _restart_async(capture) -> bool:
 
 
 def reload_page(task=None) -> bool:
-    """Reload the cloud game page so newly loaded cookies take effect."""
+    """Reload the cloud game page."""
     capture = get_browser_capture(task)
     if capture is None:
         return False
@@ -228,54 +279,52 @@ def reload_page(task=None) -> bool:
 
 
 def restart_page(task=None) -> bool:
-    """Restart the cloud game page by navigating to the configured entry URL.
-
-    Falls back to a normal reload when no URL is configured or navigation
-    fails.  Used by the auto-recovery path after a cloud task errors.
-    """
+    """Restart the cloud game page by navigating to the configured entry URL."""
     capture = get_browser_capture(task)
     if capture is None:
         return False
     return bool(_run(capture, _restart_async(capture)))
 
 
-def save_current(task=None) -> bool:
-    """Persist the live browser's cookies/localStorage for the active account."""
+def save_current(task=None, account_key: str | None = None) -> bool:
+    """Write a cookies/localStorage snapshot of the live browser for an account.
+
+    The snapshot is a portable backup: the full Chromium profile directory is
+    what actually gets restored, but the JSON survives even if the profile is
+    rebuilt by a browser update.
+    """
     capture = get_browser_capture(task)
     if capture is None:
         return False
-    account = get_active_account()
+    account = account_key or get_active_account() or live_profile_account()
     result = _run(capture, _save_async(capture, storage_state_path(account)))
-    return bool(result)
+    if not result:
+        return False
+    # The live profile now belongs to this account even if it was never marked.
+    if account and LIVE_PROFILE.exists():
+        _write_marker(LIVE_PROFILE, account)
+        set_active_account(account)
+    return True
 
 
-def activate(account_key: str | None, task=None) -> Path:
-    """Switch to ``account_key``, saving the previous account on the way out.
-
-    Kept for callers that only need the profile pointer.  The cloud game keeps a
-    live session in the page, so switching accounts reliably needs
-    :func:`restart_browser` instead of just swapping cookies in a running page.
-    """
-    previous = get_active_account()
-    if previous and previous != account_key:
-        save_current(task)
-    target = set_active_account(account_key)
-    if previous != account_key:
-        capture = get_browser_capture(task)
-        if capture is not None:
-            _run(capture, _load_async(capture, storage_state_path(account_key)))
-    return target
+def _close_capture(manager) -> None:
+    capture = getattr(manager, 'capture_method', None)
+    if capture is None:
+        return
+    try:
+        capture.close()
+    except Exception as error:  # pragma: no cover - depends on live browser
+        print(f'cloud_browser: failed to close previous browser: {error}', file=sys.stderr)
+    manager.capture_method = None
 
 
 def restart_browser(task=None, account_key=None, save_previous=True) -> bool:
     """Save the current account, then launch a fresh browser for ``account_key``.
 
-    Injecting cookies into an already running page is not enough for 云鸣潮:
-    the page keeps the previous account's session in memory/WebSocket, so the
-    next account can silently stay logged out (or even revert to the old one).
-    A dedicated browser per account is the reliable path: close the old
-    Playwright context, point ok-script at the new per-account profile and open
-    a brand new browser window.
+    Injecting cookies into a running page is not enough for 云鸣潮: the page
+    keeps the previous account's session in memory/WebSocket, so the next
+    account can silently stay logged out.  Closing the browser and starting a
+    new one on that account's own profile directory is the reliable path.
 
     ``save_previous=False`` is used by the error-recovery path, where the old
     browser may be frozen and saving its storage state would only stall the
@@ -287,19 +336,11 @@ def restart_browser(task=None, account_key=None, save_previous=True) -> bool:
         print('cloud_browser: no device manager available, cannot restart browser', file=sys.stderr)
         return False
 
-    previous = get_active_account()
-    if save_previous and previous and previous != account_key:
+    if save_previous:
         save_current(task)
-    if account_key is not None:
-        set_active_account(account_key)
 
-    old = getattr(manager, 'capture_method', None)
-    if old is not None:
-        try:
-            old.close()
-        except Exception as error:  # pragma: no cover - depends on live browser
-            print(f'cloud_browser: failed to close previous browser: {error}', file=sys.stderr)
-        manager.capture_method = None
+    _close_capture(manager)
+    prepare_live_profile(account_key)
 
     try:
         from ok.device.capture import BrowserCaptureMethod
@@ -322,6 +363,13 @@ def restart_browser(task=None, account_key=None, save_previous=True) -> bool:
     return bool(capture.connected())
 
 
+def switch_account(task, account_key: str) -> bool:
+    """Switch the cloud device to ``account_key`` and restart the browser."""
+    if not account_key:
+        return False
+    return restart_browser(task, account_key=account_key)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description='云鸣潮 account browser profiles')
     sub = parser.add_subparsers(dest='command', required=True)
@@ -340,14 +388,13 @@ def main(argv=None) -> int:
     elif args.command == 'active':
         print(get_active_account() or '(none)')
     elif args.command == 'activate':
-        target = activate(args.account)
-        print(f'active profile: {target}')
+        print(f'profile: {prepare_live_profile(args.account)}')
     elif args.command == 'save':
         if args.account:
             set_active_account(args.account)
-        print('saved' if save_current() else 'no running cloud browser to save')
+        print('saved' if save_current(None) else 'no running cloud browser to save')
     elif args.command == 'migrate':
-        print(f'profile: {migrate_legacy_profile(args.account if hasattr(args, "account") else None)}')
+        print(f'profile: {migrate_legacy_profile()}')
     return 0
 
 

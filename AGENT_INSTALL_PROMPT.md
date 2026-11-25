@@ -39,23 +39,32 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
 5. 脚本自动完成：把全部定制文件复制到 working 与 repo 两个目录、放入工坊离线缓存，
    并把被改文件备份为 .pre-cloud 后缀。请勿手动改动 Cookie、MultiAccountConfig.json、
    自定义队伍文件。
-   脚本结束会打印 "copied 32 files -> ..."，请确认这两行都出现。
-6. 启动 ok-ww，选择设备「云游戏」，确认能看到「云每日」「云多账号」「保存 Cookie」
-   「切换账号」任务，以及「角色代码」页（含工坊）。
+   脚本结束会打印 "Done: 15 file copies across 2 directories."，请确认这一行出现。
+6. 启动 ok-ww，做三项确认：
+   a. 设备下拉里选「云游戏」，任务列表里**仍然只有一个日常任务**和一个多账号任务
+      （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类
+      重复任务）；多账号任务的设置页在云设备下会多出「保存登录状态」「切换账号」
+      两个按钮，切到 PC 设备后这两个按钮消失。
+   b. 设置里能看到「Enable Blur」，选中后云游戏界面右下角 UID 被模糊/图案覆盖
+      （可切换 Blur / Inpaint）。
+   c. 「角色代码」页（含工坊）存在。
 7. 如果之后官方更新把补丁覆盖了：关闭 ok-ww 后运行 python restore.py 或双击
    一键恢复.bat；大版本结构变化则重跑第 4 步的安装脚本。详见 docs/backup-and-restore.md。
 
-【如果用户报"启动不了/报没 adb/找不到 .py"，按这个顺序排查】
-   a. 确认装齐：%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/working/ok/device/DeviceManager.py
-      与 working/src/task/BaseWWTask.py 是否存在且内容较新。缺失说明是旧版安装器
-      （只装 15 个文件），请改跑 restore.py 补齐 32 个文件。
-   b. 确认用的是「云游戏」设备类型。选「安卓/本地模拟器」才会走 adb 通道，
-      报 "Emulator is not connected, start the emulator first!" 属于选错设备类型。
-   c. 确认模拟器已启动、adb 端口可连（MuMu 默认 127.0.0.1:16384）。
-   d. 查日志：%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/working/logs/ok-script.log，
-      搜 ERROR / adb_start_game / get_preferred_device returned None。
-   e. 若日志显示 "set ADBUTILS_ADB_PATH failed"，说明找不到 adb.exe，
-      通常是 adbutils 没装全，改用 ok-ww 自带的 python 重装。
+【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
+   a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是
+      更老的官方版（如 v3.8.14），先让用户把官方 ok-ww 更新到 v3.8.15 再装补丁。
+   b. 确认装齐 15 个文件：working/src/task/MultiAccountDailyTask.py、
+      working/src/cloud_browser.py、working/config.py 等是否存在且内容较新。
+   c. 「保存登录状态 / 切换账号」只在设备选「云游戏」时出现——选成 PC 或安卓时不显示，
+      这是设计行为，不是 bug。
+   d. UID 遮罩由框架的 blur 机制实现，需要在设置里勾选「Enable Blur」（默认 Inpaint）。
+      若用 WebRTC 捕获模式，遮罩同样生效（走取帧路径，不依赖页面 DOM）。
+   e. 查日志：%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/working/logs/ok-script.log，
+      搜 ERROR / playwright / cloud。
+
+   注意：本补丁只做云鸣潮（浏览器）适配，**不含 MuMu / 安卓模拟器定制**。
+   安卓相关定制完整保留在仓库的 legacy-mumu-v1.5.21 分支，不要在本分支上排查 adb 问题。
 
 请逐步执行并汇报结果。遇到报错先自行排查修复（比如路径、Python 版本、文件占用），
 不要停下来问我，除非确实需要我提供安装路径或登录凭据。完成后告诉我可以开始使用。

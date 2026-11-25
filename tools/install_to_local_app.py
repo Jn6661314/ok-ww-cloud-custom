@@ -98,7 +98,8 @@ def install(working: Path) -> int:
 
     print(f'\nDone: {copied} file copies across {len(targets)} director'
           f'{"y" if len(targets) == 1 else "ies"}.')
-    print('Start ok-ww, select the 云游戏 device, then run CloudMultiAccountTask.')
+    print('Start ok-ww, select the 云游戏 device, then run the daily or '
+          'multi-account task as usual.')
     print('If a later official update overwrites the patch, close ok-ww and '
           'run python restore.py (or double-click 一键恢复.bat).')
     return 0

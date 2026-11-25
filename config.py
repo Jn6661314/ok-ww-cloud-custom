@@ -4,12 +4,11 @@ from pathlib import Path
 
 from ok import Box, ConfigOption, Icon
 from ok.util.GlobalConfig import create_basic_options
-from src import cloud_browser
 from src.game_launcher import get_game_launch_arguments
 from src.task.process_feature import process_feature
 from src.task.task_icons import task_icon
 
-version = "v3.8.14"
+version = "v3.8.15"
 
 
 def _find_most_recently_run_pc_exe():
@@ -121,9 +120,15 @@ def calculate_pc_exe_path(running_path):
 
 
 def blur_area(width, height):
-    blur_width = int(0.12 * width)
-    blur_height = int(0.024 * height)
-    return Box(width * 0.879, height * 0.976, blur_width * 0.973, blur_height * 0.994)
+    """Bottom-right region where the game prints the UID (player id).
+
+    Saved screenshots always pass through this box, so a cloud account's UID never
+    ends up in a log image.  The Basic Options "Enable Blur" toggle paints the same
+    box over the live window (Blur or Inpaint algorithm).  The box reaches the frame
+    edges on purpose: on a 16:9 frame the UID occupies roughly 87%..100% x 97.5%..100%,
+    and stopping short of the right edge clipped the last digits.
+    """
+    return Box(width * 0.870, height * 0.975, width * 0.130, height * 0.025)
 
 
 basic_config_option = create_basic_options(enable_blur=True)
@@ -157,17 +162,6 @@ monthly_card_config_option = ConfigOption('Monthly Card Config', {
     'Monthly Card Time': 'Your computer\'s local time when the monthly card will popup, hour in (1-24)'
 })
 
-# MuMu/安卓编队配置: 手游右上角是圆形头像(比 PC 头像大约 1.7 倍), PC 头像模板
-# 直接固定尺度匹配必然弱匹配(实测 0.62~0.79 抖动), 队伍身份每帧都在漂 ->
-# 奶妈/主C/副C 类型乱变, 切人优先级全乱。除了缩放匹配+投票锁定外,
-# 允许用户直接手填编队(最高优先级, 完全不做画面识别 —— "编队为准")。
-android_config_option = ConfigOption('MuMu/安卓 Config', {
-    'MuMu 编队': '',
-}, description='MuMu/安卓编队(可选, 编队为准): 逗号分隔的角色名, 按编队槽位顺序, 如 绯雪,漂泊者·衍射,渊武 或 Hiyuki,Rover: Spectro,Yuanwu',
-    config_description={
-        'MuMu 编队': 'MuMu/安卓编队角色名, 逗号分隔, 按编队槽位顺序填写; 支持中文名或英文名。填写后安卓端完全按此编队战斗, 不做画面识别; 留空则自动识别并锁定',
-    }, show_at_tab=True, icon=Icon.PEOPLE)
-
 config = {
     'debug': False,  # Optional, default: False
     'custom_tasks': True,
@@ -190,12 +184,11 @@ config = {
     'config_folder': 'configs',
     'blur_area': blur_area,
     'gui_icon': 'icons/icon.png',
-    'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option,
-                       android_config_option],
-    # Restored from the historical version: custom team code (自定义轴) + team workshop page.
+    # 自定义轴（队伍代码/队伍工坊）：ok-ww 历史版本自带，现以自定义页签形式保留。
     'custom_tabs': [
         ["src.gui.CharacterCodeTab", "CharacterCodeTab"],
     ],
+    'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option],
     'ocr': {
         'lib': 'onnxocr',
         'auto_simplify': True,
@@ -241,15 +234,6 @@ config = {
         'check_night_light': True,
         'force_no_night_light': False,
     },
-    # 本地安卓模拟器入口（MuMu/雷电等）：ADB 设备会出现在设备选择列表。
-    # 模拟器本身就是 Windows 窗口：截图与输入都走窗口通道（与 PC 客户端/云游戏一致），
-    # 键盘按键经模拟器自己的键位映射转成游戏操作，不再使用 adb input keyevent
-    # （keyevent 会绕过键位映射，esc 变成安卓返回键甚至触发"退出游戏"弹窗）。
-    'adb': {
-        'packages': ['com.kurogame.mingchao', 'com.kurogame.wutheringwaves'],
-        'capture_method': 'windows',
-        'interaction': 'PostMessage',
-    },
     'browser': {
         'url': 'https://mc.kurogames.com/cloud/#/',
         'resolution': (1920, 1080),
@@ -258,9 +242,7 @@ config = {
         # Keep SDR video in the compositor; direct video overlays clip WGC colors on HDR displays.
         'args': ['--webrtc-ip-handling-policy=default', '--force-color-profile=srgb',
                  '--disable-direct-composition'],
-        # Evaluated at launch time so per-account cookie profiles are honoured.
-        'user_data_dir': cloud_browser.current_profile_dir,
-        'nick': '云游戏(需要Win10 2004+或Win11, 并安装Chrome或Edge)',
+        'nick': '云游戏(需要Win11并安装Chrome或Edge)',
     },
     'window_size': {
         'width': 1200,
@@ -306,11 +288,9 @@ config = {
     'launcher_error_log_file': 'logs/launcher_error.log',
     'version': version,
     'onetime_tasks': [  # tasks to execute
+        ["src.task.DailyTask", "DailyTask"],
         ["src.task.GalGameTask", "GalGameTask"],
         ["src.task.RahaiBlocksTask", "RahaiBlocksTask"],
-        ["src.task.DailyTask", "DailyTask"],
-        ["src.task.CloudDailyTask", "CloudDailyTask"],
-        ["src.task.AndroidDailyTask", "AndroidDailyTask"],
         ["src.task.FarmEchoTask", "FarmEchoTask"],
         ["src.task.NightmareNestTask", "NightmareNestTask"],
         ["src.task.TacetTask", "TacetTask"],
@@ -319,9 +299,6 @@ config = {
         ["src.task.CultivationTask", "CultivationTask"],
         ["src.task.MultiAccountDailyTask", "MultiAccountDailyTask"],
         ["src.task.MultiAccountConfigTask", "MultiAccountConfigTask"],
-        ["src.task.CloudMultiAccountTask", "CloudMultiAccountTask"],
-        ["src.task.SaveCloudAccountCookieTask", "SaveCloudAccountCookieTask"],
-        ["src.task.SwitchCloudAccountTask", "SwitchCloudAccountTask"],
         ["src.task.MergeEchoTask", "MergeEchoTask"],
         ["src.task.EnhanceEchoTask", "EnhanceEchoTask"],
         ["src.task.ChangeEchoTask", "ChangeEchoTask"],

@@ -4,7 +4,9 @@
 
 ### 2026-11-25
 
-- **[v1.5.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.1)** — 修复全新安装装不全导致的启动失败：首装脚本与恢复脚本改为共用同一份 32 文件清单（此前首装只装 15 个，漏掉 `DeviceManager.py`、`BaseWWTask.py` 等 17 个关键文件）；安装提示词补充 ok-ww 目录结构说明与「报没 adb / 找不到 .py」排查清单。
+- **[v1.6.0](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.6.0)** — **以官方 v3.8.15 为基线重建**：官方已原生支持云鸣潮，`DailyTask` 只注册一次并按所选设备自动区分操作，因此删除我们自建的「云每日 / 云多账号 / 保存 Cookie / 切换账号」四个任务（旧配置里的任务名仍可被读取）。UID 遮罩改走框架通用 `blur_area`（与 WebRTC 视频流捕获兼容，设置里可选 Blur / Inpaint），框架侧不再有任何游戏专用注入；多账号任务内新增「保存登录状态」「切换账号」两个按钮，**仅云设备下显示**；拉海洛方块按官方新版部署并保留 4 块托盘搜索预算修复。MuMu / 安卓定制整支保留在 `legacy-mumu-v1.5.21` 分支，本版不包含。
+- **[v1.5.21](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.21)** — 云游戏 UID 遮罩兼容 WebRTC 捕获（视频流帧不经过页面合成，DOM 覆盖层会失效，改为在取帧路径涂黑）。
+- **[v1.5.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.1)** — 修复全新安装装不全导致的启动失败：首装脚本与恢复脚本改为共用同一份文件清单。
 
 ### 2026-11-24
 
@@ -39,26 +41,48 @@
 
 ## 功能更新内容
 
-一句话概览：**云游戏多账号日常自动化 + 历史功能回归**。
+一句话概览：**官方 v3.8.15 之上的云游戏多账号定制 + 历史功能回归**。
 
-- 云鸣潮启动支持；每个账号独立浏览器 Cookie profile，互不串号
-- **本地安卓模拟器（ADB）设备入口**：MuMu 12 / 通用 ADB 设备自动出现在设备列表，MuMu 可切 IPC 高速截图通道（详见下方"ADB 模拟器"一节）
-- 云游戏后台运行，无需鼠标点击浏览器窗口
-- 云每日任务（与本地每日相同的复选框）、云多账号每日任务（每账号独立配置）
-- 手动保存 Cookie / 手动切换账号（重启浏览器方式）
+> 本仓库从 v1.6.0 起**以官方 v3.8.15 为基线**：官方已原生支持云鸣潮，并且日常任务只注册一次、
+> 按所选设备自动区分 PC / 云鸣潮操作。因此这里只保留官方尚未具备的那部分定制。
+
+- 云鸣潮启动支持；每个账号独立浏览器 Cookie profile，互不串号（目录整体换入换出，不改底层框架）
+- **多账号任务内的「保存登录状态」「切换账号」按钮**：只在设备选「云游戏」时出现，PC / 安卓下不显示也不注册
+- 云游戏后台运行，无需鼠标点击浏览器窗口（后台输入伪装）
 - 任务出错自动恢复：优先重启浏览器并重跑，失败再回退刷新页面
 - 进入游戏分级冷却，解决"要点两次开始游戏"；进入完成检测；邮箱奖励误判月卡的死循环修复
-- 拉海洛方块云游戏浏览器模式适配；先约电台唤起修复；每日活跃度多次识别
-- **拉海洛方块·逆转支持"故障方块"新机制**（1/2 级故障自动识别，参与凑行消除但留在棋盘上）
-- **云鸣潮 UID 遮罩**：自动盖住右下角 UID 区域（CDP 截图同样遮挡，`cover_uid` 可关闭）
-- 拉海洛通关后退回活动主页自动点「立即前往」返回关卡列表；玩法说明弹窗（如"1 级故障方块"）自动点右上角 X 关闭，不再误报中断
+- 拉海洛方块云游戏浏览器模式适配；先约电台唤起修复；每日活跃度多区域重试识别
+- **云鸣潮 UID 遮罩走框架通用 `blur_area`**：右下角 13%×2.5% 区域模糊/图案覆盖，截图与实时窗口一致，
+  设置里「Enable Blur」可选 Blur / Inpaint；框架侧零游戏专用注入，与 WebRTC 视频流捕获兼容
+- **拉海洛方块搜索预算兜底**：任意托盘大小都做束裁剪 + 3 秒墙钟上限，4 块托盘的无尽模式不再卡死
 - 多账号配置持久化修复（排队/重启后保存不丢失、配置文件损坏自动回退备份）
 - 从上游历史恢复 **角色代码（编队自定义轴）** 页面与 **队伍创意工坊**（含离线快照）
-- **云鸣潮战斗修复**：工坊队伍代码不再被每轮识别退回内置类（"工坊参数不生效"）；单帧识别失败时用缓存身份补全、整队工坊代码保活；协奏环颜色识别在云视频流下自动加容差，减少误判导致的"乱切人"（本地客户端行为不变）
 - "刷梦魇巢穴 / 4C"由配置复选框自行决定（默认开启），不再强制关闭
-- 部分改动已按主题拆分提交**上游 PR**：[ok-wuthering-waves #1873](https://github.com/ok-oldking/ok-wuthering-waves/pull/1873)（云鸣潮多账号）、[#1874](https://github.com/ok-oldking/ok-wuthering-waves/pull/1874)（故障方块）、[ok-script #130](https://github.com/ok-oldking/ok-script/pull/130)（UID 遮罩）、[#131](https://github.com/ok-oldking/ok-script/pull/131)（账号 profile/登录态/后台输入），均通过 CI 与 SonarCloud Quality Gate；合并前本仓库仍是完整可用的快照
+- 相关**上游 PR**：[ok-wuthering-waves #1873](https://github.com/ok-oldking/ok-wuthering-waves/pull/1873)（云鸣潮多账号，已被官方 v3.8.15 的原生实现取代）、[ok-script #130](https://github.com/ok-oldking/ok-script/pull/130)（UID 遮罩，已按维护者建议改为走框架 `blur_area`，见 v1.6.0）、[ok-script #131](https://github.com/ok-oldking/ok-script/pull/131)（账号 profile / 登录态 / 后台输入）
 
 详细的逐项更新说明见 [`CHANGES.md`](CHANGES.md)。
+
+## 与官方 v3.8.15 的差异
+
+| 能力 | 官方 v3.8.15 | 本仓库 v1.6.0 |
+| --- | --- | --- |
+| 云鸣潮设备入口 / 启动 / 掉线重连 | ✅ 原生 | 沿用官方 |
+| 日常任务注册次数 | ✅ 单个 `DailyTask`，按所选设备自动区分操作 | 沿用官方（已删除我们自建的「云每日」） |
+| 多账号任务 | ✅ `MultiAccountDailyTask`（每账号独立配置） | 官方基础上加「保存登录状态」「切换账号」两个按钮，**仅云设备显示** |
+| UID 遮罩 | ✅ `config.blur_area` + 设置里的 Enable Blur | 补上遮挡区域 `Box(w*0.870, h*0.975, w*0.130, h*0.025)`，走框架同一机制 |
+| 账号登录态隔离 | ❌ Playwright 固定用 `cache/playwright`，多账号会互相顶号 | ✅ 按账号把 profile 目录整体换入换出（纯 ok-ww 侧，不改框架） |
+| 云游戏后台输入 | ❌ 需要框架支持 | ✅ 框架侧补丁 `browser.py`（= ok-script PR #131） |
+| 每日活跃度识别 | 单一区域读取，失败按 0 处理 | 多区域重试，读不到时不再误判"已完成"或"该刷体力" |
+| 拉海洛方块 | 常规关卡（按难度逐个通关） | 官方版本 + 走棋搜索预算兜底（4 块托盘不再卡死） |
+| 角色代码（编队自定义轴）/ 队伍工坊 | ❌ 上游已删除 | ✅ 从上游历史恢复，含工坊离线快照 |
+| 多账号配置持久化 | 基础实现 | 排队/重启不丢、配置文件损坏自动回退备份 |
+
+**旧版有、本版没有的能力**（官方 v3.8.15 的拉海洛方块不含这些，我们按"以官方为准"没有合并回来；
+需要的话可以从 `legacy-mumu-v1.5.21` 分支取，或让我在官方代码上重新实现）：
+
+- 无尽模式（无难度选项页面直接开始 / 加入进行中的对局 / 达到目标分数自动结算）
+- 开局玩法说明弹窗自动关闭、通关后退回活动主页自动点「立即前往」
+- 「故障方块 / 爆炸方块」机制识别
 
 ## 隐私说明
 
@@ -104,66 +128,33 @@
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
-   脚本会把**全部 32 个**定制文件复制到 `working` 与 `repo` 两处，结束时打印
-   `copied 32 files -> ...` 两行 —— 确认这两行都出现，说明装齐了。
+   脚本会把**全部 15 个**定制文件复制到 `working` 与 `repo` 两处，结束时打印
+   `Done: 15 file copies across 2 directories.` —— 确认这一行出现，说明装齐了。
 
-5. 打开 ok-ww，选择设备"云游戏"，即可看到云每日/云多账号/保存 Cookie/切换账号任务，以及"角色代码"页（含工坊）。
+5. 打开 ok-ww，做三项确认：
+   - 设备下拉选「云游戏」后，任务列表里**仍然只有一个日常任务 + 一个多账号任务**
+     （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类重复任务）；
+     多账号任务的设置页在云设备下会多出「保存登录状态」「切换账号」两个按钮。
+   - 设置里能看到「Enable Blur」，勾选后云游戏右下角 UID 被模糊/图案覆盖（可选 Blur / Inpaint）。
+   - 「角色代码」页（含工坊）存在。
 
-> **如果你的 ok-ww 是用旧版本安装器装的**：可能只装了 15 个文件，漏掉 `DeviceManager.py`、
-> `BaseWWTask.py` 等 17 个关键文件，表现为启动报错、任务列表不全、报"没 adb"。
-> 关闭 ok-ww 后补跑 `python restore.py` 即可补齐全部 32 个文件。
+> **基线版本**：本补丁以官方 **v3.8.15**（ok-script 3.0.14）为基线。如果你的官方 ok-ww
+> 还是 v3.8.14 或更早，请先把官方更新到 v3.8.15 再打补丁，否则会出现文件对不上。
 
-## 本地安卓模拟器（ADB）
+## 关于 MuMu / 安卓模拟器
 
-除了 Windows 客户端和云浏览器，ok-ww 现在也支持本地安卓模拟器 / 真机，通过 ADB 连接。设备选择列表会自动列出已安装的模拟器与已连接的 ADB 设备。
+**本分支（v1.6.0 起）不包含 MuMu / 安卓模拟器定制**，只做云鸣潮（浏览器）适配——这样
+ok-ww 侧的改动才能干净地向上游提 PR。此前完整的 MuMu 定制（ADB 设备入口、MuMu IPC 抓屏、
+触屏操作层、手游战斗/切人修复等）完整保留在仓库的 **`legacy-mumu-v1.5.21`** 分支：
 
-**游戏包名**：国服 `com.kurogame.mingchao`、国际服 `com.kurogame.wutheringwaves`，脚本按实际安装情况自动识别并拉到前台，两者都装了也没问题。
+```bash
+git clone https://github.com/Jn6661314/ok-ww-cloud-custom
+cd ok-ww-cloud-custom
+git checkout legacy-mumu-v1.5.21
+python tools/install_to_local_app.py
+```
 
-**准备工作**：
-
-1. 若首次使用报缺少 `adbutils`，在 ok-ww 安装目录执行 `python -m pip install adbutils`（`adb.exe` 由该包自带，无需单独安装 Android SDK）。
-2. 真机需在「开发者选项」里打开 USB 调试；无线设备先用 `adb connect <IP>:<端口>` 连上（MuMu 等模拟器一般会自动连接，无需手动操作）。
-
-**在 ok-ww 里连接**：
-
-1. 启动模拟器 / 真机并装好鸣潮。
-2. 打开 ok-ww，在设备选择里找到对应设备（如 `MuMuPlayer-15.0-0`、`127.0.0.1:16384`），点开连接设置：
-   - **MuMu 12**：捕获方式选 `Ipc`（`Nemu Ipc Capture`，模拟器原生截图通道，速度快，推荐）——脚本会自动识别已安装的 MuMu 12 实例并给出该选项；
-   - 其他模拟器 / 真机：保持 `ADB`（通用 `adb screencap`，后台可用但约 3fps / 300ms 每帧）。
-3. 多开模拟器时每个实例是独立设备，按序列号分别选择即可，互不干扰。
-4. 之后按普通设备运行任务。
-
-**注意**：ADB 设备是独立设备入口，不套用云浏览器（云鸣潮）的专用逻辑；通用 ADB 通道约 3fps，适合日常 / 回合类内容，实时战斗循环（如精细变轴）建议用 MuMu IPC 通道，并自行实测效果。
-
-### 安卓端常见问题
-
-**「每日任务进入大世界以后一直卡在那不动，也不跳过也没其他操作也没额外日志」**
-
-这是 2026-11-24 之前的老问题，根因与修法见上面更新日志的「安卓每日任务"卡在大世界不动"的根因修复」。升级后日志里会出现这几条，可以直接对照判断卡在哪一步：
-
-| 日志关键字 | 含义 |
-| --- | --- |
-| `in_team(android): in world (radar_yellow=...)` | 已在大世界，判定通过 |
-| `in_team(android): not in world (...)` | 不在大世界，后面会列出四个判据的实测数值 |
-| `安卓端截图全黑(MuMu 抓屏失败)` | MuMu 抓到了空帧，不是"不在大世界" |
-| `Game disconnected, closing the notice and logging in again` | 命中了【连接已断开】弹窗，正在重新登录 |
-| `MuMu 模拟器抓屏持续返回空画面(全黑)` | 抓屏通道真的坏了，需检查模拟器窗口是否可见、是否开启「后台保活」 |
-
-**MuMu 抓屏偶尔返回全黑画面**：模拟器窗口被最小化/遮挡、或 MuMu 设置里开了「后台保活」时，IPC 通道会返回一张纯黑图。现在脚本会先自动重建连接重试，仍失败会明确报错，不会再"卡住不动"。
-
-**停在【连接已断开】对话框**：挂机过久或网络抖动导致。脚本会自动点"确认"并重新登录；也可以手动把游戏切回大世界再启动任务。
-
-**报"没有 adb" / 找不到 adb.exe**：按顺序排查这 4 条，前两条最常见。
-
-| # | 现象 | 原因与解法 |
-| --- | --- | --- |
-| 1 | 装完补丁后启动就报错、任务列表不全 | 旧安装器只装了 15 个文件，漏掉 `DeviceManager.py`、`BaseWWTask.py` 等 17 个关键文件 → 关闭 ok-ww 补跑 `python restore.py` |
-| 2 | 用系统 Python 跑脚本报 `ModuleNotFoundError: adbutils` | 系统 Python 没装 adbutils → 改用 ok-ww 自带的 `%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/python/python.exe`（它自带 adbutils 和 `adb.exe`） |
-| 3 | 选了设备但报 `Emulator is not connected, start the emulator first!` | 模拟器没启动，或 adb 端口不通（MuMu 默认 `127.0.0.1:16384`）→ 先启动模拟器 |
-| 4 | 日志出现 `set ADBUTILS_ADB_PATH failed` | adbutils 没装全或 `adb.exe` 缺失 → 用自带 Python 重装，或 `python -m pip install adbutils` |
-
-**云游戏用户完全不需要 adb**：只有「安卓/本地模拟器」设备类型才走 adb 通道，
-选「云游戏」时这段逻辑完全不执行。
+需要安卓模拟器的用户请用上面这支分支；两支分支的账号 Cookie 与多账号配置格式互相兼容。
 
 ## 更新被官方覆盖后怎么恢复
 
@@ -177,24 +168,31 @@ ok-ww 自带更新会还原 `working` 和 `repo` 中的文件。两种恢复方�
 ## 目录结构
 
 ```text
-config.py                   patched 后的上游 config（任务/标签页注册）
+config.py                   patched 后的上游 config（任务/标签页注册、blur_area 遮罩区域）
 src/                        新增与修改的 ok-ww 源码
-  task/android_world.py     安卓端"在大世界且在队伍中"判定（雷达黄点/协奏金球等 HUD 判据）
-  task/android_book.py      安卓端索拉指南（PC 的 F2）类别图标定位（笔画掩码 + 多尺度 IoU）
-  task/touch_mode.py        安卓触屏操作模式层（返回=菜单=` 键，F1/F2 改为点右上角图标）
-  task/NightmareNestTask.py 梦魇/残象聚落传送（"快速旅行"按钮 OCR 识别 + 确认按钮兜底）
-ok/device/capture_methods/  patched 后的 ok-script 捕获模块
-  nemu_ipc.py               MuMu IPC 抓屏（全黑帧拦截 + 重连重试 + 30 秒冗余等待窗口）
-ok/device/DeviceManager.py  patched 后的设备管理（安卓设备启动时用 adb 拉起鸣潮）
+  task/MultiAccountDailyTask.py  官方多账号任务 + 云端「保存登录状态/切换账号」按钮（仅云设备显示）
+  task/DailyTask.py              每日任务云端适配（活跃度多区域重试、约电台不按 Alt）
+  task/RahaiBlocksTask.py        拉海洛方块（官方 v3.8.15 版本）
+  task/rahai_blocks.py           走棋算法（官方版本 + 束裁剪与 3 秒墙钟预算）
+  cloud_browser.py               按账号切换 Playwright profile 目录（纯 ok-ww 侧，不改框架）
+  cloud_recovery.py              云端错误自恢复（重启浏览器 → 刷新页面 → 放弃）
+  task/account/                  多账号配置存储（持久化、损坏回退备份）
+  task/NightmareNestTask.py      梦魇/残象聚落传送（"快速旅行"按钮 OCR 识别 + 确认按钮兜底）
+  char/、gui/                    角色代码（编队自定义轴）与队伍工坊
+ok/device/capture_methods/
+  browser.py               框架侧补丁：后台输入伪装 + CDP 调用 15 秒超时（对应 ok-script PR #131）
+                           —— 官方合入后即可删除，ok-ww 侧的 PR 不需要它
 tools/                      安装、patch、工坊缓存下载与 Release 发布脚本
   publish_release.py         把 releases/*.md 发布成 GitHub Release（自动打 tag）
 releases/                   各版本的完整改动明细（中英双语，发布脚本的正文来源）
-tests/                      新增/修改的单元测试
+tests/                      新增/修改的单元测试（143 项）
 docs/                       多账号配置说明、备份恢复说明
 workshop_cache/             工坊离线索引（teams.json + teams/*.json）
 restore.py / 一键恢复.bat   官方更新覆盖后的一键恢复
 LICENSE.txt                 AGPL-3.0 许可证原文
 ```
+
+---
 
 ## 免责声明
 

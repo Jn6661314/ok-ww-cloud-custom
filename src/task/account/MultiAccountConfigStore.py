@@ -15,6 +15,7 @@ def _tr(message):
 MULTI_ACCOUNT_TASKS = {
     ('src.task.MultiAccountDailyTask', 'MultiAccountDailyTask'),
     ('src.task.MultiAccountConfigTask', 'MultiAccountConfigTask'),
+    # 历史版本里云鸣潮的保存/切换是独立任务，账号配置不能选到它们（现在已合并成按钮）。
     ('src.task.CloudMultiAccountTask', 'CloudMultiAccountTask'),
     ('src.task.SaveCloudAccountCookieTask', 'SaveCloudAccountCookieTask'),
     ('src.task.SwitchCloudAccountTask', 'SwitchCloudAccountTask'),

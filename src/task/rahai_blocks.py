@@ -17,7 +17,8 @@ ROWS = tuple(255 << (SIZE * r) for r in range(SIZE))
 COLS = tuple(0x0101010101010101 << c for c in range(SIZE))
 FULL = (1 << (SIZE * SIZE)) - 1
 # choose_move 束搜索安全阀: 全局中间状态上限 + 单次搜索墙钟预算(秒)。
-# 4 块托盘的组合若不裁剪会指数爆炸, 这两个值保证最坏情况也在 ~1 秒内返回。
+# 4 块托盘(无尽模式)的组合若不裁剪会指数爆炸, 这两个值保证最坏情况也在几秒内
+# 返回, 而不是把整个任务卡死在纯 CPU 计算里。
 CHOOSE_MOVE_BEAM_WIDTH = 96
 CHOOSE_MOVE_TIME_BUDGET = 3.0
 
@@ -51,7 +52,6 @@ class Board:
     mask: int
     pieces: tuple
     fixed: int = 0
-    fault: int = 0
 
 
 def canonical_frame(frame):
@@ -81,34 +81,6 @@ def _board_masks(frame):
         votes += ((bright > 88) & (chroma > 40)) | fixed
         fixed_votes += fixed
     return tuple(sum(1 << int(i) for i in np.flatnonzero(v.ravel() >= 3)) for v in (votes, fixed_votes))
-
-
-def _fault_mask(frame, mask):
-    """Faulted blocks (故障方块): bright magenta noise covers the whole face.
-
-    Calibrated on the in-game tutorial art: the glitch overlay is a pink
-    static (BGR ~ (242, 105, 207)) filling ~90% of the block, well apart
-    from any flat block colour (purple R~109, blue/orange lack one of the
-    two hot channels, white icons keep B-G small).
-    """
-    if frame is None or not mask:
-        return 0
-    half = 34  # sample a 68x68 square around the cell centre
-    fault = 0
-    for i in range(SIZE * SIZE):
-        if not mask >> i & 1:
-            continue
-        row, col = divmod(i, SIZE)
-        cx = round(BOARD_X + (col + .5) * CELL)
-        cy = round(BOARD_Y + (row + .5) * CELL)
-        tile = frame[cy - half:cy + half, cx - half:cx + half]
-        if tile.shape[0] < half * 2 or tile.shape[1] < half * 2:
-            continue
-        b, g, r = tile[:, :, 0].astype(int), tile[:, :, 1].astype(int), tile[:, :, 2].astype(int)
-        glitch = (r > 160) & (b > 170) & ((b - g) > 50) & ((r - g) > 35)
-        if glitch.mean() > .2:
-            fault |= 1 << i
-    return fault
 
 
 def _read_piece(frame, slot, cy):
@@ -179,22 +151,15 @@ def read_board(frame):
     if len(trays) != 1:
         return None
     mask, fixed = _board_masks(frame)
-    fault = _fault_mask(frame, mask)
-    return Board(mask, trays[0], fixed, fault)
+    return Board(mask, trays[0], fixed)
 
 
-def clear_lines(mask, fixed=0, fault=0):
-    """Gray (数据损坏) and glitched (故障) blocks contribute to full lines but stay in place.
-
-    Corrupted blocks never leave the board; faulted blocks stay too until a
-    clear has consumed their fault level, which the caller observes via the
-    re-read board rather than simulating here.
-    """
-    occupied = mask | fixed | fault
-    lines = [line for line in (*ROWS, *COLS) if occupied & line == line]
+def clear_lines(mask, fixed=0):
+    """Gray blocks contribute to full lines but stay in place when cleared."""
+    lines = [line for line in (*ROWS, *COLS) if mask & line == line]
     for line in lines:
-        occupied &= ~line
-    return occupied | fixed | fault, len(lines)
+        mask &= ~line
+    return mask | fixed, len(lines)
 
 
 @lru_cache(maxsize=128)
@@ -229,12 +194,11 @@ def board_value(mask):
 def choose_move(board, excluded=()):
     """Search the current batch; bound intermediate states for any tray size.
 
-    无尽模式托盘是 4 块布局(TRAY_LAYOUTS 第三项), 旧版只在 len(batch)==3 时
-    裁剪中间状态, 4 块走 else 分支后状态数不设上限: 深度 2 就要评估上千万次
-    clear_lines+board_value, 单次 choose_move 纯 CPU 卡死数分钟(2026-11-25
-    18:57/19:02 两次卡死现场, 关机线程转储定格在 board_value genexpr)。
-    改为: ① 任意托盘大小、除最后一层外都做束搜索裁剪; ② 全局状态上限;
-    ③ 墙钟兜底, 超时直接采用已找到的最优解, 保证永不卡死。
+    官方只在 3 块托盘时裁剪中间状态, 而新关卡/无尽模式的托盘是 4 块:
+    走 else 分支后状态数不设上限, 深度 2 就要评估上千万次 clear_lines +
+    board_value, 单次搜索纯 CPU 跑满数分钟(2026-11-25 两次卡死现场,
+    关机线程转储定格在 board_value 生成式)。这里对任意托盘大小都裁剪,
+    并加墙钟兜底, 超时直接采用已找到的最优解, 保证永不卡死。
     """
     deadline = time.monotonic() + CHOOSE_MOVE_TIME_BUDGET
     batch = {p.slot: placements(p.cells) for p in board.pieces}
@@ -249,7 +213,7 @@ def choose_move(board, excluded=()):
                     tile_mask = p[-1]
                     if tile_mask & mask or (first is None and (slot, tile_mask) in excluded):
                         continue
-                    after, lines = clear_lines(mask | tile_mask, board.fixed, board.fault)
+                    after, lines = clear_lines(mask | tile_mask, board.fixed)
                     total = score + lines * (lines + 1) * 30
                     move = first or Move(slot, *p)
                     initial = first_lines if first else lines

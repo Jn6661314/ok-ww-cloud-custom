@@ -79,6 +79,23 @@ def _restart_browser_on_error(task, override) -> bool:
     return DEFAULT_RESTART_BROWSER_ON_ERROR
 
 
+def wait_cloud_ready(task, time_out: int = 600) -> bool:
+    """等到云鸣潮真正进入大世界。
+
+    云游戏要经过「云游戏首页 → 进入游戏 → 排队/加载 → 登录/月卡 → 大世界」几段
+    画面, 期间点击会落在加载页上。``ensure_main`` 已经包含登录框、"进入游戏"按钮、
+    月卡弹窗和断线重连的处理, 这里只需要把 ``logged_in`` 复位(让它自动加长超时)
+    并且关掉 esc(避免在加载页按返回退回云游戏首页)。
+    """
+    task.logged_in = False
+    if hasattr(task, '_cloud_start_click_time'):
+        task._cloud_start_click_time = 0
+    if hasattr(task, '_cloud_start_clicks'):
+        task._cloud_start_clicks = 0
+    task.ensure_main(esc=False, time_out=time_out)
+    return True
+
+
 def refresh_cloud_game(task, *, wait_ready: bool = True, time_out: int = 600,
                        restart_browser: bool | None = None) -> bool:
     """出错后重启云鸣潮浏览器并（可选）等待云端重新进入大世界。
@@ -136,7 +153,7 @@ def refresh_cloud_game(task, *, wait_ready: bool = True, time_out: int = 600,
 
     if wait_ready and not _is_stopped(task):
         try:
-            task.wait_cloud_game_ready(time_out=time_out)
+            wait_cloud_ready(task, time_out=time_out)
         except _NEVER_RETRY:
             raise
         except Exception as error:

@@ -52,6 +52,12 @@ class ExampleTrigger(ExampleTask):
     __module__ = 'src.task.ExampleTrigger'
 
 
+def fake_hwnd_window():
+    """ok 3.0.14 的 PostMessageInteraction 构造时会把自己登记到 hwnd_window.visible_monitors，
+    并且 hwnd property 会读取 top_hwnd / hwnd，这里给出最小可用的替身。"""
+    return SimpleNamespace(visible_monitors=[], top_hwnd=0, hwnd=0)
+
+
 def account(key='1231234', task=None, values=None):
     return {'account_key': key, 'task': task_reference(task) if task else None,
             'config': values or {}}
@@ -141,7 +147,7 @@ class TestMultiAccountConfig(unittest.TestCase):
         import win32con
 
         capture = SimpleNamespace(get_abs_cords=lambda x, y: (x + 300, y + 100))
-        interaction = PostMessageInteraction(capture, SimpleNamespace())
+        interaction = PostMessageInteraction(capture, fake_hwnd_window())
         interaction.update_mouse_pos = Mock(return_value=0)
         cursor = [0, 0]
         delivered = []
@@ -165,7 +171,7 @@ class TestMultiAccountConfig(unittest.TestCase):
         runner.sleep.assert_any_call(0.2)
 
     def test_background_click_outside_login_does_not_move_real_cursor(self):
-        interaction = PostMessageInteraction(SimpleNamespace(), SimpleNamespace())
+        interaction = PostMessageInteraction(SimpleNamespace(), fake_hwnd_window())
         interaction.click = Mock()
         runner = object.__new__(MultiAccountConfigTask)
         runner.tr = str
@@ -177,7 +183,7 @@ class TestMultiAccountConfig(unittest.TestCase):
 
     def test_login_relative_fallback_uses_converted_desktop_coordinates(self):
         capture = SimpleNamespace(get_abs_cords=lambda x, y: (x + 300, y + 100))
-        interaction = PostMessageInteraction(capture, SimpleNamespace())
+        interaction = PostMessageInteraction(capture, fake_hwnd_window())
         interaction.click = Mock()
         runner = object.__new__(MultiAccountConfigTask)
         runner.tr = str

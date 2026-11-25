@@ -71,9 +71,11 @@ FAKE_POINTER_LOCK_JS = '''() => {
   return true;
 }'''
 
-
-# OK-WW BACKGROUND INPUT PATCH: cloud game input must work without OS window focus.
-OK_BACKGROUND_JS = '''() => {
+# Pages normally report themselves hidden/unfocused when their window is in the
+# background, and web games stop accepting input in that state. Report the page as
+# always visible and focused so automation keeps working while the browser window
+# is behind other windows. Disable with browser config 'background_input': False.
+BACKGROUND_INPUT_JS = '''() => {
   if (window.__okBackgroundInput === undefined) {
     window.__okBackgroundInput = true;
     Object.defineProperty(document, 'hasFocus', {configurable: true, value: () => true});
@@ -84,36 +86,6 @@ OK_BACKGROUND_JS = '''() => {
   }
   return true;
 }'''
-
-# OK-WW UID COVER: mask the bottom-right corner where the game shows the UID,
-# mirroring the PC overlay (ok.ui.qt.debug.OverlayWidget.paint_uid_cover:
-# bottom-right 13% x 2.5%). The bar is pointer-events:none so clicks pass
-# through, and add_init_script re-applies it after every navigation.
-OK_UID_COVER_JS = '''() => {
-  if (document.getElementById('ok-uid-cover')) return true;
-  var install = function () {
-    if (document.getElementById('ok-uid-cover')) return;
-    var div = document.createElement('div');
-    div.id = 'ok-uid-cover';
-    div.style.cssText = 'position:fixed;right:0;bottom:0;width:13vw;height:2.5vh;'
-        + 'background:#000;z-index:2147483647;pointer-events:none;';
-    (document.body || document.documentElement).appendChild(div);
-  };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', install);
-    document.addEventListener('readystatechange', function () {
-      if (document.readyState !== 'loading') install();
-    });
-  } else {
-    install();
-  }
-  return true;
-}'''
-
-# UID 遮罩的像素级尺寸(相对帧): 与 PC 端 OverlayWidget.paint_uid_cover
-# 的 bottom-right 13% x 2.5% 一致, 也与 OK_UID_COVER_JS 的 13vw x 2.5vh 对应。
-UID_COVER_WIDTH = 0.13
-UID_COVER_HEIGHT = 0.025
 
 
 class BrowserCaptureMethod(BaseCaptureMethod):
@@ -152,8 +124,6 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         self.latest_frame = None
         self.wgc_capture = None
         self.capture_mode = config.get('capture', 'wgc')
-        # UID 遮罩: DOM 覆盖层(窗口可见) + 帧像素遮罩(WebRTC/截图帧一致), 同一开关。
-        self._cover_uid = config.get('cover_uid', True)
         self._webrtc = None
         self._tap_offset = (0.0, 0.0)
         self._next_tap_check = 0.0
@@ -182,12 +152,12 @@ class BrowserCaptureMethod(BaseCaptureMethod):
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
-                # v1.5.19: 云游戏浏览器卡顿/假死时 CDP 调用可能永久阻塞,
-                # 导致任务静默卡死(实测 71 秒无任何日志)。超时后取消调用并
-                # 放行, 让上层重试; 被卡协程会在下一个 await 点被取消。
+                # A stalled browser (cloud game page frozen, CDP not answering)
+                # used to block the caller forever with no log output at all.
+                # Cancel the stuck coroutine and let the caller retry instead.
                 future.cancel()
-                logger.warning(f"Playwright 调用超时({timeout}秒)，已取消并继续。"
-                               f"云游戏浏览器可能卡顿，若频繁出现请检查浏览器窗口状态。")
+                logger.warning(f'Playwright call timed out after {timeout}s, cancelled and continuing. '
+                               f'Check the browser window if this happens repeatedly.')
             except Exception as e:
                 logger.error(f"Playwright execution error: {e}")
         return None
@@ -232,16 +202,7 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         args.append(f"--disable-features={','.join(disable_features)}")
         args.extend(self.config.get('args', []))
 
-        # OK-WW CLOUD ACCOUNT PROFILE V2: per-account browser profile (ok-wuthering-waves extension).
-        # launch_persistent_context() has NO storage_state parameter; restoring a
-        # saved login is done through the context API just after launch (below).
-        _cloud_dir = self.config.get('user_data_dir')
-        if callable(_cloud_dir):
-            _cloud_dir = _cloud_dir()
-        user_data_dir = str(_cloud_dir) if _cloud_dir else os.environ.get('OK_WW_CLOUD_PROFILE')
-        user_data_dir = user_data_dir or os.path.join('cache', 'playwright')
-        os.makedirs(user_data_dir, exist_ok=True)
-        self.user_data_dir = user_data_dir
+        user_data_dir = os.path.join('cache', 'playwright')
 
         channels = self.config.get('channels', ['msedge', 'chrome', 'chromium'])
         for channel in channels:
@@ -266,40 +227,10 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         fake_pointer_lock = self.config.get('fake_pointer_lock', True)
         if fake_pointer_lock:
             await self.browser.add_init_script(script=f'({FAKE_POINTER_LOCK_JS})()')
+        if self.config.get('background_input', True):
+            await self.browser.add_init_script(script=f'({BACKGROUND_INPUT_JS})()')
         if self.capture_mode == 'webrtc':
             await self.browser.add_init_script(script=f'({PEER_CONNECTION_REGISTRY_JS})()')
-        # OK-WW CLOUD ACCOUNT PROFILE V2: restore cookies/localStorage for this account.
-        _state_path = os.path.join(self.user_data_dir, 'storage_state.json')
-        if os.path.isfile(_state_path):
-            try:
-                import json as _json
-                with open(_state_path, encoding='utf-8') as _f:
-                    _saved = _json.load(_f)
-                _saved_cookies = _saved.get('cookies') or []
-                if _saved_cookies:
-                    await self.browser.add_cookies(_saved_cookies)
-                for _origin in (_saved.get('origins') or []):
-                    _url = _origin.get('origin', '')
-                    for _entry in (_origin.get('localStorage') or []):
-                        _name = _entry.get('name', '')
-                        _value = _entry.get('value', '')
-                        await self.browser.add_init_script(
-                            script="if (location.origin === " + _json.dumps(_url)
-                            + ") { try { localStorage.setItem(" + _json.dumps(_name)
-                            + ", " + _json.dumps(_value) + "); } catch (e) {} }")
-            except Exception as _e:
-                logger.warning(f"Failed to restore browser storage state: {_e}")
-
-        fake_pointer_lock = self.config.get('fake_pointer_lock', True)
-        if fake_pointer_lock:
-            await self.browser.add_init_script(script=f'({FAKE_POINTER_LOCK_JS})()')
-        background_input = self.config.get('background_input', True)
-        if background_input:
-            # OK-WW BACKGROUND INPUT PATCH: keep the cloud game accepting input when unfocused.
-            await self.browser.add_init_script(script=f'({OK_BACKGROUND_JS})()')
-        if self._cover_uid:
-            # OK-WW UID COVER PATCH: hide the bottom-right UID region (cloud WW).
-            await self.browser.add_init_script(script=f'({OK_UID_COVER_JS})()')
 
         await asyncio.sleep(0.1)
 
@@ -339,8 +270,9 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         if self.capture_mode == 'webrtc':
             # Connections a reused page already created stay unregistered until it reloads.
             await self.page.evaluate(PEER_CONNECTION_REGISTRY_JS)
-        if background_input:
-            await self.page.evaluate(OK_BACKGROUND_JS)
+        if self.config.get('background_input', True):
+            # A reused page was loaded before the init script was registered.
+            await self.page.evaluate(BACKGROUND_INPUT_JS)
 
         await self.page.bring_to_front()
         await self.page.set_viewport_size({'width': width, 'height': height})
@@ -438,12 +370,6 @@ class BrowserCaptureMethod(BaseCaptureMethod):
                 pass
         if self.browser:
             try:
-                # OK-WW CLOUD ACCOUNT PATCH: persist cookies/localStorage for this account.
-                _state_dir = getattr(self, 'user_data_dir', os.path.join('cache', 'playwright'))
-                await self.browser.storage_state(path=os.path.join(_state_dir, 'storage_state.json'))
-            except Exception as e:
-                logger.warning(f"Failed to save browser storage state: {e}")
-            try:
                 await self.browser.close()
             except:
                 pass
@@ -532,23 +458,6 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         if frame is not None and source != self._frame_source:
             logger.info(f'BrowserCaptureMethod capturing from {source}')
             self._frame_source = source
-        return self._apply_uid_cover(frame)
-
-    def _apply_uid_cover(self, frame):
-        """把 UID 遮罩画到帧上(像素级), 兼容 WebRTC 与截图两种捕获源。
-
-        WebRTC 模式直接读取页面视频流的解码帧, 不经过页面合成, 所以
-        OK_UID_COVER_JS 注入的 DOM 覆盖层不会出现在帧里 —— 截图/日志会
-        泄露右下角 UID(遮罩失效)。这里按与 PC 端相同的比例(右下 13% x 2.5%)
-        直接涂黑帧像素, 两种捕获源输出一致; 覆盖层本身仍保留, 让浏览器
-        窗口里也看不到 UID。
-        """
-        if frame is None or not getattr(self, '_cover_uid', True):
-            return frame
-        height, width = frame.shape[:2]
-        bar_w = max(1, round(width * UID_COVER_WIDTH))
-        bar_h = max(1, round(height * UID_COVER_HEIGHT))
-        frame[height - bar_h:, width - bar_w:] = 0
         return frame
 
     def _webrtc_frame(self):
