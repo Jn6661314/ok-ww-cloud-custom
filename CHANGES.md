@@ -11,6 +11,7 @@
 
 | 版本 | 一句话摘要 |
 | --- | --- |
+| [v1.5.3](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.3) | 修复 MuMu 手动锁定后仍不战斗：手游 UI 无 PC 锁定图标、`has_target()` 恒失败一直 retarget；改为安卓端用头顶红色血条判定目标（阈值 0.95→0.8），锁敌键改用 Y 键（原中键对模拟器无效），PC/云游戏行为不变 |
 | [v1.5.2](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.2) | 修复 MuMu/安卓端无法自动战斗：安卓队伍栏无数字徽章导致当前角色下标恒为 -1，`get_current_char()` 返回 None 使 `.perform()` 抛 AttributeError；改为脚本维护逻辑下标 + 兜底选角 + 切人同步，PC/云游戏行为不变 |
 | [v1.5.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.1) | 修复全新安装装不全导致的启动失败：首装脚本与恢复脚本共用同一份 32 文件清单（此前首装只装 15 个，漏掉 `DeviceManager.py`、`BaseWWTask.py` 等 17 个关键文件）；安装提示词补充目录结构说明与"报没 adb / 找不到 .py"排查清单 |
 

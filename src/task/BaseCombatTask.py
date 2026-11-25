@@ -542,7 +542,7 @@ class BaseCombatTask(CombatCheck):
             if result := self.in_combat():
                 break
             if target:
-                self.middle_click(interval=0.5)
+                self.tap_target(interval=0.5)
             self.sleep(0.02)
 
         if raise_if_not_found and not result:

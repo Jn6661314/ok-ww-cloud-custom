@@ -60,6 +60,17 @@ class CombatCheck(BaseWWTask):
         self.esc_count = 0
         self.can_break = False
 
+    def tap_target(self, **kwargs):
+        """锁敌: PC/云游戏用鼠标中键; 安卓端(MuMu)用 Y 键。
+
+        MuMu 走 is_adb() 分支, 中键点击不会触发游戏内锁敌,
+        必须用 Y 键(模拟器键位映射里的锁定目标键)才能锁定并进入战斗。
+        """
+        if self.is_adb():
+            self.send_key('y', **kwargs)
+        else:
+            self.middle_click(**kwargs)
+
     @property
     def in_liberation(self):
         return self._in_liberation
@@ -212,7 +223,7 @@ class CombatCheck(BaseWWTask):
             has_target = self.has_target()
             if not has_target and target:
                 self.log_debug('try target')
-                self.middle_click(after_sleep=0.1)
+                self.tap_target(after_sleep=0.1)
             in_combat = has_target or ((self.config.get('Auto Target') or not isinstance(self,
                                                                                          AutoCombatTask)) and self.check_health_bar())
             if in_combat:
@@ -311,6 +322,12 @@ class CombatCheck(BaseWWTask):
     def has_target(self, double_check=False):
         if self.is_browser():
             return self.cloud_has_target()
+        if self.is_adb():
+            # 安卓端(如 MuMu)是手游 UI, 没有 PC 端的锁定图标(骷髅准星),
+            # 找 has_target 模板永远匹配不到 -> 一直 "target lost, retarget",
+            # 即使手动锁定了敌人也不会进入攻击循环。
+            # 手游里"有敌人头顶红色血条"即等价于"有可战斗目标"。
+            return self.check_health_bar()
         threshold = 0.6
         has_name, no_name = self.get_target_names()
         best = self.find_best_match_in_box(self.get_box_by_name(has_name).scale(1.1), [has_name, no_name],
@@ -377,7 +394,7 @@ class CombatCheck(BaseWWTask):
 
     def target_enemy(self, wait=True, time_out=None, check_health=False):
         if not wait:
-            self.middle_click()
+            self.tap_target()
         else:
             if self.target_visible():
                 return True
@@ -387,7 +404,7 @@ class CombatCheck(BaseWWTask):
                 start = time.time()
                 health_lost_start = None
                 while time.time() - start < timeout:
-                    self.middle_click(interval=CLOUD_RETARGET_INTERVAL if self.is_browser() else 0.2)
+                    self.tap_target(interval=CLOUD_RETARGET_INTERVAL if self.is_browser() else 0.2)
                     if self.target_visible():
                         return True
                     self.next_frame()
@@ -403,6 +420,9 @@ class CombatCheck(BaseWWTask):
                 return False
 
     def has_health_bar(self):
+        # 安卓端(手游 UI)血条带抗锯齿/渐变, 红色填充率只有 0.8~0.9;
+        # PC 用的 0.95 会把手游血条全部漏掉 -> 一直认为没有敌人。
+        adb = self.is_adb()
         if self._in_combat:
             min_height = self.height_of_screen(9 / 2160)
             max_height = min_height * 3
@@ -413,8 +433,12 @@ class CombatCheck(BaseWWTask):
             min_width = self.width_of_screen(100 / 3840)
 
         browser = self.is_browser()
+        # 手游血条允许更低的填充率, 并要求横向条形以排除伤害数字/技能特效
+        health_threshold = 0.8 if adb else (CLOUD_HEALTH_BAR_FILL if browser else 0.95)
         boxes = find_color_rectangles(self.frame, enemy_health_color_red, min_width, min_height,
-                                       max_height=max_height, threshold=CLOUD_HEALTH_BAR_FILL if browser else 0.95)
+                                       max_height=max_height, threshold=health_threshold)
+        if adb:
+            boxes = [box for box in boxes if box.width >= box.height * 3 and box.width >= self.width_of_screen(100 / 3840)]
         if browser:
             # 放宽颜色填充后仍要求横向条形, 排除伤害数字和零散红色特效。
             boxes = [box for box in boxes if box.width >= box.height * 3]
