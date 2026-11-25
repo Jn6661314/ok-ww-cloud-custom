@@ -89,15 +89,131 @@ class BaseWWTask(BaseTask):
         else:
             super().back(*args, after_sleep=after_sleep, **kwargs)
 
+    # ---- 安卓模拟器(Pynput 真实键盘)输入 ------------------------------------
+    # MuMu 手游靠"键位映射"操作: 模拟器把【真实 Windows 键盘事件】转成屏幕触摸。
+    # ADBInteraction.send_key 走 `input keyevent KEYCODE_xxx`, 是安卓系统层按键,
+    # 手游根本不认 —— 表现就是: 手动按 Y 能锁敌, 脚本 send_key('y') 却毫无反应,
+    # 技能键 e/q/r 发出去没有动画(click_liberation 一直 timeout)。
+    # 这里在 ADB 模拟器(带 hwnd_window, 排除真机)上叠加一次 Pynput 真实键盘事件,
+    # 等价于手动按键, 触发模拟器键位映射。手游不响应原生 keyevent, 故叠加不会
+    # 造成"按两次"; 真机无 hwnd_window, 仍只走原本的 ADB keyevent, 行为不变。
+    def _adb_keymap_available(self):
+        if not self.is_adb():
+            return False
+        try:
+            dm = getattr(self.executor, 'device_manager', None)
+            if dm is None or getattr(dm, 'hwnd_window', None) is None:
+                return False  # 真机 ADB 没有模拟器窗口
+            from ok.device.interaction_methods.adb import ADBInteraction
+            return isinstance(getattr(self.executor, 'interaction', None), ADBInteraction)
+        except Exception:
+            return False
+
+    def _adb_focus_window(self):
+        """Pynput 真实键盘只会送到前台窗口, 发送前先把 MuMu 窗口切到前台。
+
+        上游 PynputInteraction 也用 is_foreground() 拒绝非前台输入; 这里沿用同一
+        判据, 但主动 bring_to_front() 一次, 让后台运行的脚本也能触发键位映射。
+        """
+        if not self._adb_keymap_available():
+            return False
+        try:
+            hwnd_window = self.executor.device_manager.hwnd_window
+            is_foreground = getattr(hwnd_window, 'is_foreground', None)
+            bring_to_front = getattr(hwnd_window, 'bring_to_front', None)
+            if callable(is_foreground) and is_foreground():
+                return True
+            if callable(bring_to_front):
+                bring_to_front()
+                time.sleep(0.05)
+                if callable(is_foreground) and not is_foreground():
+                    logger.debug('adb keymap: MuMu window still not foreground, skip pynput key')
+                    return False
+            # 桩对象/无前景判据的实现: 不阻断原有输入通道。
+            return True
+        except Exception as e:
+            logger.debug(f'adb focus window failed: {e}')
+            return False
+
+    @staticmethod
+    def _parse_pynput_key(key):
+        from pynput import keyboard
+        k = str(key).lower()
+        special = {
+            'esc': keyboard.Key.esc, 'escape': keyboard.Key.esc,
+            'enter': keyboard.Key.enter, 'return': keyboard.Key.enter,
+            'space': keyboard.Key.space, ' ': keyboard.Key.space,
+            'tab': keyboard.Key.tab,
+            'shift': keyboard.Key.shift, 'lshift': keyboard.Key.shift_l,
+            'rshift': keyboard.Key.shift_r,
+            'ctrl': keyboard.Key.ctrl, 'control': keyboard.Key.ctrl,
+            'lctrl': keyboard.Key.ctrl_l, 'rctrl': keyboard.Key.ctrl_r,
+            'alt': keyboard.Key.alt, 'lalt': keyboard.Key.alt_l, 'ralt': keyboard.Key.alt_r,
+        }
+        if k in special:
+            return special[k]
+        if k.startswith('f') and k[1:].isdigit() and 1 <= int(k[1:]) <= 12:
+            return getattr(keyboard.Key, k)
+        if len(k) == 1:
+            return k  # 字母/数字/反引号等单字符, pynput 直接接受
+        return None
+
+    def _adb_real_key(self, key, down_time=0.02, up=True):
+        """用 Pynput 发真实键盘事件(触发模拟器键位映射)。返回是否成功。"""
+        if not self._adb_keymap_available() or not self._adb_focus_window():
+            return False
+        try:
+            parsed = self._parse_pynput_key(key)
+            if parsed is None:
+                return False
+            from pynput import keyboard
+            ctrl = keyboard.Controller()
+            ctrl.press(parsed)
+            if up:
+                time.sleep(min(max(down_time, 0.01), 0.2))
+                ctrl.release(parsed)
+            return True
+        except Exception as e:
+            logger.debug(f'adb real key failed for {key}: {e}')
+            return False
+
     def send_key(self, key, down_time=0.02, interval=-1, after_sleep=0):
         """触屏下把所有 esc 改写为键位表的 ` 键(返回/菜单是同一个按钮)。
 
         覆盖 BaseCombatTask / DailyTask / CombatCheck 等散落的 send_key('esc'),
         无需逐个修改; ADB 输入通道下 ` 会映射为 KEYCODE_GRAVE。
+
+        安卓模拟器上叠加 Pynput 真实键盘, 触发 MuMu 键位映射(见 _adb_real_key)。
         """
         if self.touch.is_touch and str(key).lower() in ('esc', 'escape'):
             key = TOUCH_MENU_BACK_KEY
+        if self._adb_keymap_available():
+            self._adb_real_key(key, down_time=down_time)
         return super().send_key(key, down_time=down_time, interval=interval, after_sleep=after_sleep)
+
+    def send_key_down(self, key, after_sleep=0):
+        """安卓模拟器长按走位: Pynput 按下真实键, 触发键位映射的方向摇杆。"""
+        if self._adb_keymap_available():
+            # ADBInteraction 没有 send_key_down/up, 不能回落到 super (会 AttributeError)。
+            if self._adb_real_key(key, up=False) and after_sleep > 0:
+                self.sleep(after_sleep)
+            return
+        return super().send_key_down(key, after_sleep=after_sleep)
+
+    def send_key_up(self, key, after_sleep=0):
+        """安卓模拟器松开走位键: 对应 send_key_down 的 Pynput 抬起。"""
+        if self._adb_keymap_available():
+            try:
+                parsed = self._parse_pynput_key(key)
+                if parsed is not None:
+                    from pynput import keyboard
+                    keyboard.Controller().release(parsed)
+                    if after_sleep > 0:
+                        self.sleep(after_sleep)
+            except Exception as e:
+                logger.debug(f'adb real key up failed for {key}: {e}')
+            return  # 同上: 绝不回落到 ADBInteraction 不存在的 send_key_up
+        return super().send_key_up(key, after_sleep=after_sleep)
 
     @property
     def logged_in(self):
@@ -405,11 +521,27 @@ class BaseWWTask(BaseTask):
                              threshold=0.8,
                              target_height=720)
 
+    # 手游(安卓/MuMu)HUD 的普攻按钮中心, 相对截图 1920x1080 的比例。
+    # 实测 MuMu 1500x845 截图上攻击按钮中心约 (1200, 655) -> (0.80, 0.775)。
+    # PC 客户端"左键点屏幕任意处=普攻", 但手游只有点这个圆形按钮才是普攻;
+    # 点屏幕中央(0.5,0.5)落在角色/空地上, 表现就是角色一动不动、怪不掉血。
+    TOUCH_ATTACK_BUTTON = (0.80, 0.775)
+
+    def _adb_attack_xy(self):
+        """手游普攻按钮的执行器坐标(frame 1920x1080 等比换算)。"""
+        return (self.width_of_screen(self.TOUCH_ATTACK_BUTTON[0]),
+                self.height_of_screen(self.TOUCH_ATTACK_BUTTON[1]))
+
     def click(self, x=-1, y=-1, move_back=False, name=None, interval=-1, move=False, down_time=0.01, after_sleep=0,
               key="left"):
         if x == -1 and y == -1:
-            x = self.width_of_screen(0.5)
-            y = self.height_of_screen(0.5)
+            if self.is_adb() and getattr(self, '_in_combat', False):
+                # 手游战斗中: click() 无坐标是"普攻"语义(见 BaseChar.normal_attack /
+                # continues_normal_attack / f_break)。必须点右下角攻击按钮, 不能点屏幕中心。
+                x, y = self._adb_attack_xy()
+            else:
+                x = self.width_of_screen(0.5)
+                y = self.height_of_screen(0.5)
             move = False
             down_time = 0.01
         else:
@@ -418,16 +550,21 @@ class BaseWWTask(BaseTask):
                              key=key)
 
     def mouse_down(self, x=-1, y=-1, name=None, key="left"):
-        """安卓端(ADB)长按普攻: 上游 ADBInteraction 没有 mouse_down, 直接调会抛
-        AttributeError 让自动战斗中断(实测 Rover 重击连招 mouse_down 崩溃)。
-        手游普攻靠点屏幕中心(见本类 click() 的 -1,-1 处理), 长按用 nemu 触摸 down/up。
+        """安卓端(ADB)长按普攻(重击): 点住手游右下角攻击按钮。
+
+        上游 ADBInteraction 没有 mouse_down, 直接调会抛 AttributeError 中断战斗
+        (v1.5.6)。手游普攻靠点攻击按钮(见本类 click()), 长按同一按钮即重击。
         PC/云游戏仍走上游实现, 行为不变。
         """
         if not self.is_adb():
             return super().mouse_down(x, y, name=name, key=key)
         if x == -1 and y == -1:
-            x = self.width_of_screen(0.5)
-            y = self.height_of_screen(0.5)
+            # 与 click() 一致: 战斗中长按攻击按钮; 非战斗兜底屏幕中心。
+            if getattr(self, '_in_combat', False):
+                x, y = self._adb_attack_xy()
+            else:
+                x = self.width_of_screen(0.5)
+                y = self.height_of_screen(0.5)
         interaction = getattr(self.executor, 'interaction', None)
         capture = getattr(interaction, 'capture', None)
         nemu_impl = getattr(capture, 'nemu_impl', None)
