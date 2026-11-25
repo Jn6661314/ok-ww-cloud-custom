@@ -119,7 +119,9 @@ class TestAndroidPartyBadges(unittest.TestCase):
         self.assertEqual(key_map[1], '1', '徽章 2 旁边的提示是按 1 键')
         self.assertEqual(BaseWWTask.android_switch_key(fake, 0), '2')
         self.assertEqual(BaseWWTask.android_switch_key(fake, 1), '1')
-        self.assertEqual(BaseWWTask.android_switch_key(fake, 2), '3')
+        # 当前是 1 号位(默认 current_index=0), 切 3 号位: 另一个队友(2 号位)
+        # 已确认用 1 键, 剩下那颗 2 键必然归 3 号位 —— 不再发不存在的 3 键。
+        self.assertEqual(BaseWWTask.android_switch_key(fake, 2), '2')
 
     def test_pc_switch_key_unchanged(self):
         fake = PartyTask(adb=False, badges=[('1', 220), ('2', 320)])
@@ -132,7 +134,7 @@ class TestCombatMuMuCompatibility(unittest.TestCase):
 
     def test_switch_next_char_uses_android_switch_key(self):
         src = (self.repo / 'src/task/BaseCombatTask.py').read_text(encoding='utf-8')
-        self.assertIn('self.android_switch_key(switch_to.index)', src)
+        self.assertIn('self.android_switch_key(switch_to.index, exclude=tried_keys)', src)
         self.assertIn('switch_to.index + 1', src, 'PC/云仍保留原约定')
 
     def test_auto_combat_guards_none_and_exceptions(self):

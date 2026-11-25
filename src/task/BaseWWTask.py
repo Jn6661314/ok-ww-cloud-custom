@@ -58,7 +58,11 @@ ANDROID_BOOK_TAB_FEATURES = ('gray_book_quest', 'gray_book_boss', 'gray_book_wee
 ANDROID_PARTY_HUD_BOX = (0.84, 0.16, 0.99, 0.46)
 ANDROID_PARTY_BADGE_RE = re.compile(r'^[123]$')
 ANDROID_SWITCH_LABEL_RE = re.compile(r'切\s*换\s*角\s*色\s*([123])')
-ANDROID_DEFAULT_SWITCH_KEYS = {0: '1', 1: '2', 2: '3'}
+# MuMu 手游只有 1/2 两颗切换键, 对应当前不在场的两个队友, 映射随出战角色
+# 动态变化(实测出战 3 号位时: 键 1 -> 2 号位, 键 2 -> 1 号位)。
+# 绝不能发 3 键 —— 模拟器键位映射里没有绑定, 发了等于没按,
+# 切到 3 号位就会永远失败并在 10 秒后中断战斗。
+ANDROID_SWITCH_KEYS = ('1', '2')
 f_white_color = {
     'r': (235, 255),  # Red range
     'g': (235, 255),  # Green range
@@ -1272,22 +1276,25 @@ class BaseWWTask(BaseTask):
 
         return current_direction, current_adjust, False
 
-    def _read_android_party_badges(self):
+    def _read_android_party_badges(self, force=False):
         """OCR 手游队伍栏的编队徽章与键位提示, 返回 (非出战槽位, 槽位->切换键)。
 
         手游确实有 1/2/3 数字徽章, 只是样式和 PC 模板不同, find_one 命中不了。
         例如截图里徽章 1/2 同时出现, 说明当前出战的是编队 3 号位; 徽章 1 旁的
         "切换角色2" 提示则代表按 2 键切到该角色 (MuMu 键位映射可能和槽位倒序)。
-        结果做 0.3 秒缓存, 避免战斗循环每帧都跑 OCR。
+        键位映射随出战角色动态变化, 所以 OCR 读不到的槽位不再填默认键,
+        由 android_switch_key() 按当前角色动态推导。结果做 0.3 秒缓存,
+        避免战斗循环每帧都跑 OCR; force=True 跳过缓存(发键后核实用)。
         """
         now = time.monotonic()
-        if (getattr(self, '_android_party_scan_ready', False)
+        if (not force
+                and getattr(self, '_android_party_scan_ready', False)
                 and now - getattr(self, '_android_party_scan_at', 0) < 0.3):
             return set(getattr(self, '_android_party_badges', set())), dict(getattr(self, '_android_switch_key_map', {}))
 
         badges = set()
         badge_boxes = []
-        key_map = dict(ANDROID_DEFAULT_SWITCH_KEYS)
+        key_map = {}
         try:
             box = self.box_of_screen(*ANDROID_PARTY_HUD_BOX)
             for b in self.ocr(box=box, match=ANDROID_PARTY_BADGE_RE):
@@ -1315,14 +1322,58 @@ class BaseWWTask(BaseTask):
         self._android_party_scan_ready = True
         return set(badges), dict(key_map)
 
-    def android_switch_key(self, index):
-        """安卓端按编队槽位取实际切换键; PC/云仍用 index+1 的原有约定。"""
+    def android_switch_key(self, index, exclude=()):
+        """安卓端按编队槽位取实际切换键; PC/云仍用 index+1 的原有约定。
+
+        MuMu 只有 1/2 两颗切换键, 分别绑在队伍栏的两个队友按钮上, 按钮内容
+        随出战角色变化, 所以键->角色的映射是动态的。优先级:
+          1. OCR 读到的"切换角色N"键位提示;
+          2. 同队另一个队友已确认的键 -> 剩下那颗必然是本槽位;
+          3. 兜底规律(实测出战 3 号位时键 1 切 2 号位): 键 1 给编队靠后的队友。
+        exclude 里的键是本轮切人已按过但没切成生效的, 跳过以自动换另一颗键。
+        任何路径都不会返回 3 —— 模拟器上没有这个键。
+        """
         if self.is_adb():
             _, key_map = self._read_android_party_badges()
+            candidates = []
             key = key_map.get(index)
-            if key:
-                return key
+            if key in ANDROID_SWITCH_KEYS:
+                candidates.append(key)
+            current = getattr(self, '_android_current_index', 0)
+            others = [i for i in range(3) if i != current]
+            if index in others:
+                other = [i for i in others if i != index]
+                other_key = key_map.get(other[0]) if other else None
+                if other_key in ANDROID_SWITCH_KEYS:
+                    candidates.append(next(k for k in ANDROID_SWITCH_KEYS if k != other_key))
+                candidates.append('1' if index == max(others) else '2')
+                candidates.append('2' if index == max(others) else '1')
+            candidates.append(str(index + 1))
+            for k in candidates:
+                if k not in exclude:
+                    return k
+            return candidates[0]
         return str(index + 1)
+
+    def android_confirm_switch(self, target_index):
+        """发切人键后用编队徽章核实实际出战角色, 返回核实到的下标或 None。
+
+        MuMu 的切换键映射随出战角色动态变化, 盲发后必须核实: 按错键时如果
+        还是乐观推进逻辑下标, 脚本以为切成了, 实际还在原角色上, 后续连招
+        全部打在错误的角色假设上, 表现为"切人有问题"。徽章读不到(切人
+        动画期 OCR 抖动)时返回 None, 由调用方决定是否乐观推进。
+        """
+        if not self.is_adb():
+            return None
+        badges, _ = self._read_android_party_badges(force=True)
+        if len(badges) == 2:
+            missing = [i for i in range(3) if i not in badges]
+            if len(missing) == 1:
+                if missing[0] != getattr(self, '_android_current_index', -1):
+                    self.log_debug(f'android_confirm_switch: current -> {missing[0] + 1}')
+                self._android_current_index = missing[0]
+                return missing[0]
+        return None
 
     def in_team(self):
         # 安卓端(ADB/模拟器)队伍栏是圆形头像, 没有 PC 端的 1/2/3 数字徽章,
