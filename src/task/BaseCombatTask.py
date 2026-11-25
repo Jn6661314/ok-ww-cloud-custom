@@ -871,7 +871,11 @@ class BaseCombatTask(CombatCheck):
                 self.sleep(0.1)
                 continue
             if now - last_click > 0.1:
-                self.send_key(switch_to.index + 1)
+                # 安卓端 MuMu 的键位映射可能和编队槽位不是 index+1 的直连关系
+                # (实测槽位1对应"切换角色2")。用 OCR 队伍栏读出的映射发键,
+                # PC/云仍保持原来的 index+1 约定。
+                switch_key = self.android_switch_key(switch_to.index) if self.is_adb() else switch_to.index + 1
+                self.send_key(switch_key)
                 if self.is_adb():
                     # 安卓端队伍栏是圆形头像, in_team() 返回的是脚本维护的逻辑
                     # 下标, 不会像 PC 那样随画面自动变化。发出切人键后必须主动

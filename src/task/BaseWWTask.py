@@ -52,6 +52,13 @@ CONFIRM_BUTTON_TEXTS = ('确认', '確定', '确定', re.compile(r'确\s*认|確
 CONFIRM_BUTTON_SEARCH_BOX = (0.3, 0.3, 0.7, 0.85)
 # 安卓索拉指南左列的类别图标(PC 模板), 用于判断书是否已经打开
 ANDROID_BOOK_TAB_FEATURES = ('gray_book_quest', 'gray_book_boss', 'gray_book_weekly', 'gray_book_all_monsters')
+# 手游队伍栏的编队识别: 非出战角色头像旁有 1/2/3 数字徽章, 以及 MuMu 键位映射
+# 叠加的"切换角色N"提示。PC 的 char_N_text 模板在手游样式上匹配不到(0.11~0.15),
+# 改用 OCR 读这两类文字, 直接按游戏里的编队槽位判断当前角色和切换键。
+ANDROID_PARTY_HUD_BOX = (0.84, 0.16, 0.99, 0.46)
+ANDROID_PARTY_BADGE_RE = re.compile(r'^[123]$')
+ANDROID_SWITCH_LABEL_RE = re.compile(r'切\s*换\s*角\s*色\s*([123])')
+ANDROID_DEFAULT_SWITCH_KEYS = {0: '1', 1: '2', 2: '3'}
 f_white_color = {
     'r': (235, 255),  # Red range
     'g': (235, 255),  # Green range
@@ -1265,6 +1272,58 @@ class BaseWWTask(BaseTask):
 
         return current_direction, current_adjust, False
 
+    def _read_android_party_badges(self):
+        """OCR 手游队伍栏的编队徽章与键位提示, 返回 (非出战槽位, 槽位->切换键)。
+
+        手游确实有 1/2/3 数字徽章, 只是样式和 PC 模板不同, find_one 命中不了。
+        例如截图里徽章 1/2 同时出现, 说明当前出战的是编队 3 号位; 徽章 1 旁的
+        "切换角色2" 提示则代表按 2 键切到该角色 (MuMu 键位映射可能和槽位倒序)。
+        结果做 0.3 秒缓存, 避免战斗循环每帧都跑 OCR。
+        """
+        now = time.monotonic()
+        if (getattr(self, '_android_party_scan_ready', False)
+                and now - getattr(self, '_android_party_scan_at', 0) < 0.3):
+            return set(getattr(self, '_android_party_badges', set())), dict(getattr(self, '_android_switch_key_map', {}))
+
+        badges = set()
+        badge_boxes = []
+        key_map = dict(ANDROID_DEFAULT_SWITCH_KEYS)
+        try:
+            box = self.box_of_screen(*ANDROID_PARTY_HUD_BOX)
+            for b in self.ocr(box=box, match=ANDROID_PARTY_BADGE_RE):
+                text = (getattr(b, 'name', '') or '').strip()
+                if text in ('1', '2', '3'):
+                    index = int(text) - 1
+                    badges.add(index)
+                    badge_boxes.append((index, b.y + b.height / 2))
+            for b in self.ocr(box=box, match=ANDROID_SWITCH_LABEL_RE):
+                match = ANDROID_SWITCH_LABEL_RE.search(getattr(b, 'name', '') or '')
+                if not match:
+                    continue
+                key = match.group(1)
+                label_y = b.y + b.height / 2
+                if badge_boxes:
+                    index, badge_y = min(badge_boxes, key=lambda item: abs(item[1] - label_y))
+                    if abs(badge_y - label_y) < 200:
+                        key_map[index] = key
+        except Exception as e:
+            logger.debug(f'android party badge ocr failed: {e}')
+
+        self._android_party_badges = badges
+        self._android_switch_key_map = key_map
+        self._android_party_scan_at = now
+        self._android_party_scan_ready = True
+        return set(badges), dict(key_map)
+
+    def android_switch_key(self, index):
+        """安卓端按编队槽位取实际切换键; PC/云仍用 index+1 的原有约定。"""
+        if self.is_adb():
+            _, key_map = self._read_android_party_badges()
+            key = key_map.get(index)
+            if key:
+                return key
+        return str(index + 1)
+
     def in_team(self):
         # 安卓端(ADB/模拟器)队伍栏是圆形头像, 没有 PC 端的 1/2/3 数字徽章,
         # char_N_text 模板永远匹配不上(实测置信度仅 0.11~0.15), 会让
@@ -1328,24 +1387,24 @@ class BaseWWTask(BaseTask):
             return False, -1, 1
 
         self.logged_in = True
-        # 安卓端队伍栏是圆形头像, PC 的 char_N_text 数字徽章模板永远匹配不上,
-        # 无法像 PC 那样从画面读出"当前出战角色下标"。原先这里恒返回 -1,
-        # 连锁后果:
-        #   load_chars() 里没有任何角色的 index 能匹配 -1 -> is_current_char 全 False
-        #   -> get_current_char() 返回 None
-        #   -> combat_once() 的 self.get_current_char().perform() 抛
-        #      AttributeError: 'NoneType' object has no attribute 'perform'
-        #   -> 战斗刚进入就崩溃/错误恢复反复重启, 表现为"MuMu 无法自动战斗"。
-        #   switch_next_char() 靠 current_index == switch_to.index 判定切人成功,
-        #   恒 -1 还会让切人等 10 秒后抛 raise_not_in_combat。
-        # 改为维护一个脚本内部的逻辑下标: 初始 0, 每次真正发出切人键后由
-        # BaseCombatTask.switch_next_char() 推进, 保证战斗链路始终有当前角色。
+        # 按游戏里的编队识别, 而不是固定写死"2 人队伍 / 当前 1 号位"。
+        # 手游队伍栏中非出战角色带 1/2/3 数字徽章: 两个徽章 -> 3 人队,
+        # 缺的那个槽位就是当前出战角色。切人/动画期 OCR 偶尔读不到时沿用
+        # 脚本维护的 _android_current_index, 不再把它粗暴重置成 0。
+        badges, key_map = self._read_android_party_badges()
+        team_size = len(badges) + 1 if badges else 3
+        team_size = min(max(team_size, 2), 3)
         current_index = getattr(self, '_android_current_index', 0)
-        if not isinstance(current_index, int) or not 0 <= current_index < 3:
+        missing = [i for i in range(team_size) if i not in badges]
+        if badges and len(missing) == 1:
+            current_index = missing[0]
+        if not isinstance(current_index, int) or not 0 <= current_index < team_size:
             current_index = 0
         self._android_current_index = current_index
-        self.log_debug(f'in_team(android): in world ({reason}), logical current char={current_index}')
-        return True, current_index, 2
+        self.log_debug(
+            f'in_team(android): in world ({reason}), badges={sorted(badges)}, '
+            f'team_size={team_size}, current={current_index}, switch_keys={key_map}')
+        return True, current_index, team_size
 
         # Function to check if a component forms a ring
 

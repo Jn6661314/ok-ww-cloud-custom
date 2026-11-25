@@ -39,7 +39,8 @@ PLAN = [
     ('v1.5.4', 'v1.5.4 · 修复 MuMu 切人卡死导致打着打着停 / Fix MuMu combat stalling on character switch', 'c986d31'),
     ('v1.5.5', 'v1.5.5 · 修复 MuMu 掉线弹窗卡住不动 / Fix MuMu freeze on disconnect dialog', 'a3849be'),
     ('v1.5.6', 'v1.5.6 · 修复 MuMu 重击长按 mouse_down 崩溃 / Fix MuMu crash on heavy attack', '0fafa52'),
-    ('v1.5.7', 'v1.5.7 · 修复 MuMu 手游端锁敌也不打 / Fix MuMu mobile combat doing nothing', 'HEAD'),
+    ('v1.5.7', 'v1.5.7 · 修复 MuMu 手游端锁敌也不打 / Fix MuMu mobile combat doing nothing', 'cb44f95'),
+    ('v1.5.8', 'v1.5.8 · 修复 MuMu 打着打着停 / 按编队识别队伍 / AutoCombatTask 兼容', 'HEAD'),
 ]
 
 

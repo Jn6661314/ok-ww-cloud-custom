@@ -51,6 +51,10 @@ class FakeTask:
     def is_browser(self):
         return False
 
+    def _read_android_party_badges(self):
+        # 老测试桩不跑 OCR; 无徽章时按完整三人编队、保留既有逻辑下标。
+        return set(), {0: '1', 1: '2', 2: '3'}
+
     def log_debug(self, msg):
         self.logs.append(('debug', msg))
 
@@ -75,7 +79,7 @@ class TestInTeamAndroid(unittest.TestCase):
         self.assertTrue(in_team)
         self.assertNotEqual(index, -1, 'c0: 当前角色下标不能是 -1')
         self.assertTrue(0 <= index < 3)
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 3, 'MuMu 队伍必须按完整编队(3 人)加载, 不能写死 2 人')
         self.assertTrue(fake.logged_in)
 
     def test_preserves_advanced_logical_index(self):
@@ -174,8 +178,8 @@ class TestSourceGuards(unittest.TestCase):
                       'c12: combat_once 必须有当前角色缺失保护')
 
     def test_in_team_android_uses_logical_index(self):
-        self.assertIn('return True, current_index, 2', self.wwsrc,
-                      'c13: in_team_android 必须返回逻辑下标而非 -1')
+        self.assertIn('return True, current_index, team_size', self.wwsrc,
+                      'c13: in_team_android 必须返回逻辑下标和按编队得到的人数')
 
 
 if __name__ == '__main__':

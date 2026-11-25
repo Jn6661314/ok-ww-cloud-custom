@@ -63,6 +63,9 @@ RELATIVE_FILES = [
     'src/char/CustomCharLoader.py',
     'src/char/CharFactory.py',
     'src/task/BaseCombatTask.py',
+    # AutoCombatTask 触发任务: MuMu 队伍识别抖动时不能让 None.perform()/普通异常
+    # 冒泡到 TaskExecutor 把触发任务 disable, 否则自动战斗会"打着打着自己关了"。
+    'src/task/AutoCombatTask.py',
     # 怪物消失后自动退出战斗
     'src/combat/CombatCheck.py',
     # Win10 云鸣潮兼容 (WGC 可用性门禁 + 去除黄色边框)

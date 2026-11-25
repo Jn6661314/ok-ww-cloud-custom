@@ -204,7 +204,7 @@ class CombatCheck(BaseWWTask):
             has_health = self.check_health_bar()
             if has_health:
                 self._no_enemy_since = 0
-            if self.is_browser() and self.cloud_health_bar_grace(has_health):
+            if (self.is_browser() or self.is_adb()) and self.cloud_health_bar_grace(has_health):
                 # 云游戏: 未锁定但敌人血条仍在(或刚消失不久)即视为战斗中,
                 # 且要先于结束条件判断, 避免技能特效/血条闪烁让声骸识别误判战斗结束。
                 # 但如果血条是特效误判而反复闪烁, 仍要在连续无目标超时后退出。
