@@ -3,6 +3,11 @@
 把下面整段复制给你使用的 Agent（WorkBuddy / Claude / Cursor 等），它就能自动在本机完成安装与验证。
 安装脚本会先备份被修改的文件，且**不会**覆盖你的 Cookie、多账号配置和自定义队伍。
 
+> **先选对提示词**：
+> - 用户提到**云鸣潮 / 多账号日常 / MuMu 模拟器 / 远控窗口（UU远程、ToDesk 等）/ 云游戏** → 用本文件；
+> - 用户提到**双机 / 采集卡 / KMBox / 键鼠盒 / 游戏机+控制机 / 硬件输入 / DXGI 远程** → 用
+>   [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md)。两者是独立安装、不同目录，不能混装。
+
 ---
 
 ## 复制以下内容发给 Agent
@@ -39,7 +44,8 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
 5. 脚本自动完成：把全部定制文件复制到 working 与 repo 两个目录、放入工坊离线缓存，
    并把被改文件备份为 .pre-cloud 后缀。请勿手动改动 Cookie、MultiAccountConfig.json、
    自定义队伍文件。
-   脚本结束会打印 "Done: 29 file copies across 2 directories."，请确认这一行出现。
+   脚本结束会打印 "Done: N file copies across 2 directories."（N = 定制文件数 × 2，
+   当前清单 31 个文件时是 62），请确认这一行出现。数字随仓库清单变化属正常。
 6. 启动 ok-ww，做三项确认：
    a. 设备下拉里选「云游戏」，任务列表里**仍然只有一个日常任务**和一个多账号任务
       （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类

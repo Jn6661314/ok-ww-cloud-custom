@@ -7,6 +7,12 @@
 
 ---
 
+## 2026-11-26
+
+| 版本 | 一句话摘要 |
+| --- | --- |
+| [v1.8.5](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.5) | **两套 Agent 安装提示词**：新增 `AGENT_INSTALL_DUALPC.md`（真双机版：采集卡 + KMBox Net / SendInput，独立项目 okww-dualpc，独立目录，不碰现有 ok-ww），主提示词与 README 加分流表（云鸣潮/MuMu/远控 → 原提示词；双机/采集卡/KMBox → 新提示词）。评估后**不把双机合并进本分支**：它是 6600 行 Python 适配层 + Rust 内核 + Qt 界面的独立实现，基线为 ok-ww-enhanced/老 ok-script，设备层把 device_dict 覆写成唯一双机设备、关闭 browser/adb/windows，与我们的云/MuMu/远控天然互斥。顺手修正 README 与提示词里过时的 `Done: 15/29 file copies`（现为 31×2=62，且以脚本实际输出为准）。仅文档变更，243 项测试仍通过 |
+
 ## 2026-11-25
 
 | 版本 | 一句话摘要 |

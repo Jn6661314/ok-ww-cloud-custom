@@ -1,10 +1,27 @@
-## 最简单的安装方法：让 Agent 帮你快速安装
+## 让 Agent 帮你安装：先选对版本
 
-不想手动操作？把 [`AGENT_INSTALL_PROMPT.md`](AGENT_INSTALL_PROMPT.md) 里的整段提示词复制给你常用的 Agent（WorkBuddy / Claude / Cursor 等），它会自动检查环境、关闭软件、运行安装脚本并验证任务是否出现。提示词已包含"不覆盖 Cookie / 账号配置 / 自定义队伍"的约束。
+有两套安装提示词，按你的**设备形态**选，不要混装：
+
+| 你的场景 | 提示词 | 安装内容 |
+| --- | --- | --- |
+| 云鸣潮 / 多账号日常 / MuMu 模拟器 / 远控窗口（UU远程、ToDesk、向日葵、Parsec）/ 单机 PC | [`AGENT_INSTALL_PROMPT.md`](AGENT_INSTALL_PROMPT.md) | 本仓库的 Python 定制补丁（装进现有 ok-ww 的 `working`/`repo`） |
+| 双机：游戏机 + 控制机，采集卡取画面，KMBox Net 键鼠盒或 SendInput 输入，DXGI 远程 | [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md) | 独立项目 [okww-dualpc](https://github.com/xueyuannnn/okww-dualpc) 的官方包（独立目录，Rust 内核 + Qt 界面） |
+
+把对应文件里 `text` 代码块中的整段内容复制给 Agent（WorkBuddy / Claude / Cursor 等），它会自动完成安装与验证；
+提示词里已写明"不覆盖 Cookie / 账号配置 / 自定义队伍"以及"两套安装互不干扰"的约束。
+
+**为什么不把双机做成同款补丁**：okww-dualpc 是另一套完整实现（41 个 Python 适配文件约 6600 行 +
+Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script），设备层还会把
+`device_dict` 覆写成唯一双机设备、关闭 browser/adb/windows —— 与本仓库的云鸣潮/MuMu/远控窗口
+天然互斥。做两套独立安装、各自独立目录，比强行合并更稳，也便于分别升级。
 
 ## 更新日志
 
 按**日**汇总，完整改动明细见 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases)（中英双语）。
+
+### 2026-11-26
+
+- **[v1.8.5](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.5)** — **两套 Agent 安装提示词**：新增 [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md) 对应真双机版（采集卡 + KMBox Net / SendInput，来自独立项目 okww-dualpc，独立目录安装，不碰现有 ok-ww），原提示词与 README 加分流表。评估后不把双机合并进本分支：它是 6600 行 Python 适配层 + Rust 内核 + Qt 界面的独立实现、基线不同、设备层与其他设备互斥。顺手修正两处过时的 `Done: 15/29 file copies` 文案。仅文档变更，243 项测试通过。
 
 ### 2026-11-25
 
@@ -152,8 +169,9 @@ MuMu / 安卓定制、无尽模式、详情页直接开始、玩法说明弹窗�
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
-   脚本会把**全部 15 个**定制文件复制到 `working` 与 `repo` 两处，结束时打印
-   `Done: 15 file copies across 2 directories.` —— 确认这一行出现，说明装齐了。
+   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 31 个）复制到 `working` 与
+   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 62）
+   —— 确认这一行出现，说明装齐了；数字随清单变化属正常，以脚本实际输出为准。
 
 5. 打开 ok-ww，做三项确认：
    - 设备下拉选「云游戏」后，任务列表里**仍然只有一个日常任务 + 一个多账号任务**
