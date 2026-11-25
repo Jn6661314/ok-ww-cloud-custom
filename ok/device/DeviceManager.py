@@ -794,23 +794,10 @@ class DeviceManager:
                 elif self.hwnd_window is not None:
                     self.hwnd_window.stop()
                     self.hwnd_window = None
-                # Explicit interaction override (e.g. 'PostMessage' in the app's
-                # adb config): drive the emulator window like a native PC window
-                # with real keyboard/mouse messages, so the emulator's own game
-                # keymap translates them — instead of raw `input keyevent`, which
-                # bypasses the emulator keymap entirely.
-                if (self.config.get('capture') == 'windows'
-                        and self.config.get('interaction')
-                        and self.win_interaction_class is not None
-                        and self.win_interaction_class is not ADBInteraction
-                        and self.hwnd_window is not None
-                        and self.capture_method is not None
-                        and hasattr(self.capture_method, 'get_abs_cords')):
-                    if not isinstance(self.interaction, self.win_interaction_class):
-                        self.interaction = self.win_interaction_class(self.capture_method, self.hwnd_window)
-                    else:
-                        self.interaction.capture = self.capture_method
-                elif not isinstance(self.interaction, ADBInteraction):
+                # 非窗口抓屏(ipc / adb 截图)一律走 ADBInteraction:
+                # 输入由 BaseWWTask.send_key 叠一层真实键盘事件交给模拟器键位映射。
+                # 窗口消息交互只在上面 capture == 'windows' 的分支里创建。
+                if not isinstance(self.interaction, ADBInteraction):
                     self.interaction = ADBInteraction(self, self.capture_method, width, height)
                 else:
                     self.interaction.capture = self.capture_method
