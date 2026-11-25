@@ -1,5 +1,6 @@
 """Vision and move planning for the 8x8 score board."""
 
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -15,6 +16,10 @@ TRAY_LAYOUTS = ((495, 735), (375, 615, 855), (255, 495, 735, 975))
 ROWS = tuple(255 << (SIZE * r) for r in range(SIZE))
 COLS = tuple(0x0101010101010101 << c for c in range(SIZE))
 FULL = (1 << (SIZE * SIZE)) - 1
+# choose_move 束搜索安全阀: 全局中间状态上限 + 单次搜索墙钟预算(秒)。
+# 4 块托盘的组合若不裁剪会指数爆炸, 这两个值保证最坏情况也在 ~1 秒内返回。
+CHOOSE_MOVE_BEAM_WIDTH = 96
+CHOOSE_MOVE_TIME_BUDGET = 3.0
 
 
 @dataclass(frozen=True)
@@ -222,7 +227,16 @@ def board_value(mask):
 
 
 def choose_move(board, excluded=()):
-    """Search the current batch; bound intermediate states for three trays."""
+    """Search the current batch; bound intermediate states for any tray size.
+
+    无尽模式托盘是 4 块布局(TRAY_LAYOUTS 第三项), 旧版只在 len(batch)==3 时
+    裁剪中间状态, 4 块走 else 分支后状态数不设上限: 深度 2 就要评估上千万次
+    clear_lines+board_value, 单次 choose_move 纯 CPU 卡死数分钟(2026-11-25
+    18:57/19:02 两次卡死现场, 关机线程转储定格在 board_value genexpr)。
+    改为: ① 任意托盘大小、除最后一层外都做束搜索裁剪; ② 全局状态上限;
+    ③ 墙钟兜底, 超时直接采用已找到的最优解, 保证永不卡死。
+    """
+    deadline = time.monotonic() + CHOOSE_MOVE_TIME_BUDGET
     batch = {p.slot: placements(p.cells) for p in board.pieces}
     states = [(board.mask, tuple(batch), 0, 0, None)]
     best = None
@@ -248,7 +262,7 @@ def choose_move(board, excluded=()):
         ordered = sorted(candidates.values(), key=lambda candidate: candidate[0], reverse=True)
         best = ordered[0][1][-1]
         # Preserve alternatives for every remaining subset before the final ply.
-        if len(batch) == 3 and depth < 2:
+        if depth < len(batch) - 1:
             counts = {}
             states = []
             for _, state in ordered:
@@ -256,8 +270,12 @@ def choose_move(board, excluded=()):
                 if counts.get(rest, 0) < 24:
                     states.append(state)
                     counts[rest] = counts.get(rest, 0) + 1
+            if len(states) > CHOOSE_MOVE_BEAM_WIDTH:
+                states = states[:CHOOSE_MOVE_BEAM_WIDTH]
         else:
             states = [state for _, state in ordered]
+        if time.monotonic() >= deadline:
+            break
     return best
 
 

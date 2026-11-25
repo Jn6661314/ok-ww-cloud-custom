@@ -93,9 +93,61 @@ def test_choose_move_with_fault():
     print("test_choose_move_with_fault OK")
 
 
+def test_choose_move_4_tray_no_explosion():
+    import time as _t
+    # 无尽模式托盘是 4 块布局(TRAY_LAYOUTS 第三项)。旧版束宽保护只认
+    # len(batch)==3, 4 块时中间状态不裁剪 -> 组合爆炸, 单次 choose_move
+    # 纯 CPU 卡死数分钟(2026-11-25 现场日志+关机线程转储实锤)。
+    pieces = tuple(
+        type("P", (), {"slot": i, "cells": cells, "pickup": (0, 0)})
+        for i, cells in enumerate((
+            ((0, 0), (0, 1), (0, 2), (0, 3)),   # I4
+            ((0, 0), (1, 0), (2, 0), (2, 1)),   # L
+            ((0, 0), (1, 0), (0, 1), (1, 1)),   # O
+            ((0, 0), (0, 1), (0, 2)),           # I3
+        ))
+    )
+    board = Board(mask=ROWS[0], pieces=pieces, fixed=0, fault=0)
+    start = _t.monotonic()
+    move = choose_move(board)
+    elapsed = _t.monotonic() - start
+    assert move is not None, "4 块托盘必须能找到落点"
+    assert elapsed < 5, f"choose_move 耗时 {elapsed:.1f}s, 组合爆炸回归"
+    print(f"test_choose_move_4_tray_no_explosion OK ({elapsed:.2f}s)")
+
+
+def test_choose_move_time_budget():
+    import time as _t
+    # 墙钟兜底: 预算耗尽时必须立即用已找到的最优解返回, 永不卡死。
+    from src.task import rahai_blocks
+    saved = rahai_blocks.CHOOSE_MOVE_TIME_BUDGET
+    rahai_blocks.CHOOSE_MOVE_TIME_BUDGET = 1e-9
+    try:
+        pieces = tuple(
+            type("P", (), {"slot": i, "cells": cells, "pickup": (0, 0)})
+            for i, cells in enumerate((
+                ((0, 0), (0, 1), (0, 2), (0, 3)),
+                ((0, 0), (1, 0), (2, 0), (2, 1)),
+                ((0, 0), (1, 0), (0, 1), (1, 1)),
+                ((0, 0), (0, 1), (0, 2)),
+            ))
+        )
+        board = Board(mask=0, pieces=pieces, fixed=0, fault=0)
+        start = _t.monotonic()
+        move = choose_move(board)
+        elapsed = _t.monotonic() - start
+        assert move is not None, "预算耗尽也应返回已找到的最优解"
+        assert elapsed < 2, f"墙钟兜底失效: {elapsed:.1f}s"
+    finally:
+        rahai_blocks.CHOOSE_MOVE_TIME_BUDGET = saved
+    print("test_choose_move_time_budget OK")
+
+
 if __name__ == "__main__":
     test_fault_vision()
     test_clear_lines_fault_stays()
     test_clear_lines_fault_decrement_observed_by_reread()
     test_choose_move_with_fault()
+    test_choose_move_4_tray_no_explosion()
+    test_choose_move_time_budget()
     print("ALL RAHAI FAULT TESTS PASSED")

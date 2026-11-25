@@ -38,6 +38,7 @@ RELATIVE_FILES = [
     'src/task/SaveCloudAccountCookieTask.py',
     'src/task/SwitchCloudAccountTask.py',
     'src/task/RahaiBlocksTask.py',
+    'src/task/rahai_blocks.py',
     'src/task/DailyTask.py',
     'src/task/BaseWWTask.py',
     # 安卓触屏专用操作模式层(返回/菜单=键位表 `, 指南书 F2, PC/云不变)
