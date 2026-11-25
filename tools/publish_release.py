@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.4', 'v1.8.4 · 修复启动即崩(MuMu 配置改名漏改引用) / Fix startup crash from stale MuMu config name', 'HEAD'),
     ('v1.8.3', 'v1.8.3 · 钉住版本 tag，挡住启动器 checkout -f 还原定制 / Pin the version tag so the launcher cannot revert the customizations', 'HEAD'),
     ('v1.8.2', 'v1.8.2 · 修掉启动器版本号不同步(显示 3.8.14) / Sync launcher version to config.py', 'HEAD'),
     ('v1.8.1', 'v1.8.1 · 修正远控/串流窗口入口位置 + 配置名含斜杠 / Fix remote-window page entry & slash in config names', 'HEAD'),

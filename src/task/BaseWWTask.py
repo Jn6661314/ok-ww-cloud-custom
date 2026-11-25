@@ -84,7 +84,7 @@ ANDROID_SWITCH_KEYS = ('1', '2')
 # 2 秒内读出 4 种组合(漂泊者/渊武/仇远/绯雪乱串), char_type 随之漂移,
 # 切人优先级/奶妈逻辑全废。
 # 修复分三层:
-#   1) 全局配置 'MuMu/安卓 Config'->'MuMu 编队' 手填角色名(最高优先级, 零识别);
+#   1) 全局配置 'MuMu 安卓 Config'->'MuMu 编队' 手填角色名(最高优先级, 零识别);
 #   2) 自动: 把队伍栏裁剪后缩放 0.58 倍到 PC 头像尺度再模板匹配(命中率高);
 #   3) 连续 ANDROID_TEAM_LOCK_MIN_VOTES 次识别一致才锁定; 锁定后 load_chars
 #      完全跳过模板匹配(战斗期间零 OCR, 响应"编队为准、战斗期不识别")。
@@ -120,7 +120,7 @@ class BaseWWTask(BaseTask):
         self.char_config = self.get_global_config('Character Config')
         self.key_config = self.get_global_config('Game Hotkey')  # 游戏热键配置
         # MuMu/安卓编队(可选, 用户手填则"编队为准"完全跳过画面识别)
-        self.android_config = self.get_global_config('MuMu/安卓 Config')
+        self.android_config = self.get_global_config('MuMu 安卓 Config')
         self.next_monthly_card_start = 0
         self.login_screen_visible = False
         self.scene: WWScene | None = None

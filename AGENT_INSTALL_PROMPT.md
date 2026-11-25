@@ -62,7 +62,7 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
      app.json.<时间戳>.bak）。所以务必用 restore.py 部署，不要手动只拷 .py 文件。
    - 用户报"版本还是 3.8.14"时：先看是启动器还是应用内；两者不一致就让其重跑 restore.py。
 
-【启动器为什么会把定制刷回官方（v1.8.3 已堵）】
+【启动器为什么会把定制刷回官方（v1.8.3 钉 tag + v1.8.4 修崩溃）】
    - 启动器（pyappify）的动作是：读 app.json 的 current_version → 在 repo 里找同名 git tag
      （例如 v3.8.15）→ `git checkout -f <tag>`。`-f` 会丢弃工作区所有未提交改动。
    - 所以"只提交进 git"不够：定制提交只是当时的 HEAD，tag 仍指向官方提交，checkout 一秒钟切回官方
@@ -72,6 +72,12 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    - 排查用户"定制又没了"：`git -C <repo> reflog -5` 看有没有 `checkout: moving from ... to ...`；
      `git -C <repo> rev-parse v3.8.15^{commit}` 应等于 `git -C <repo> rev-parse HEAD`。
      不符合就重跑 restore.py。
+   - **但启动崩溃时钉 tag 也拦不住**：启动器判定"安装损坏"会绕开 git，直接从官方文件整份重装
+     working/repo（2026-11-25 23:56 实例：reflog 的 checkout 目标是定制提交，事后 HEAD 仍是官方
+     567f025）。所以第一优先级是**保证代码能启动**；用户报"打不开/一闪就退"时先看
+     `working/logs/ok-script.log` 里的 `ok:__init__ error` 与 `RuntimeError: Can not find global
+     config X`（配置改名漏改引用就长这样，v1.8.4 就是修这个），修好再 restore。
+   - 全局配置名一致性有静态检查：`tests/TestGlobalConfigRefs.py`（改任何配置名前先跑它）。
 
 【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
    a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是

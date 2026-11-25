@@ -8,6 +8,7 @@
 
 ### 2026-11-25
 
+- **[v1.8.4](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.4)** — **修复启动即崩**：v1.8.1 把全局配置 `MuMu/安卓 Config` 改名为 `MuMu 安卓 Config`（去斜杠）时只改了 `config.py` 的注册处，漏改 `BaseWWTask.py:123` 的读取处，导致每次任务初始化都抛 `RuntimeError: Can not find global config MuMu/安卓 Config`，ok-ww 连试三次后直接退出。改掉这 1 行 + 新增 `tests/TestGlobalConfigRefs.py` 4 项 AST 静态检查（`get_global_config` 的字面量必须都在 `config.py` 注册过），全量 243 项通过，实测启动 `Loaded 11 tasks` 无报错。
 - **[v1.8.3](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.3)** — **堵死「启动一次就丢定制」的第二条路径**：v1.8.2 把定制提交进 git 后，又打开一次官方启动器，22 个已跟踪文件仍被整体刷回官方（`config.py` 17430→13380 字节）。reflog 揭穿真相：启动器不是比对工作区，而是拿 `app.json` 的 `current_version`（`v3.8.15`）找**同名 git tag** 再 `git checkout -f` —— tag 指向官方提交时，`-f` 直接覆盖工作区，定制提交只是"当时的 HEAD"、一秒钟被甩掉。`restore.py` 现在把版本 tag 本身（`v3.8.15`）指到定制提交（原官方指向备份为 `official-v3.8.15`），此后启动器的 checkout 切出来的就是定制树；已实测 checkout 后仍是定制版、重复运行幂等，`tests/TestRestoreGitSync.py` 8→13 项，全量 239 项通过。
 - **[v1.8.2](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.2)** — **修掉「本地版本显示 3.8.14」**：代码基线早就是 v3.8.15（`config.py::version`、启动日志、应用内「关于」页都是 3.8.15），但**启动器**（ok-ww.exe）读的是 `data/apps/ok-ww/app.json` 里的 `current_version`，那里还留着装 3.8.14 时的值。除了显示不对，它还让启动器以为"可以更新到 3.8.15" —— **一旦点更新，官方代码会覆盖 `working`/`repo`，整套定制全丢**。现在 `restore.py` 每次部署都会把 `app.json.current_version` 对齐到 `config.py::version`（改前自动备份 `app.json.<时间戳>.bak`），9 项单测覆盖（版本不同改写、相同不动、无文件/坏 JSON 安全跳过）。
 - **[v1.8.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.1)** — **修正远控/串流窗口的入口位置说明**：它是左侧导航栏「游戏」分组里的独立页（图标=显示器），**不在「设置」页里**（`show_at_tab` 配置项会被设置页主动跳过），此前文档写的「设置 → …」让人找不到；同时修掉配置名含 `/` 导致配置被写成 `configs/远控/串流窗口.json` 子目录的问题（改为 `远控串流窗口(试验性)`，文件落回 `configs/` 根下），`MuMu/安卓 Config` 一并改为 `MuMu 安卓 Config`，并加单测禁止全局配置名再出现斜杠。
@@ -280,23 +281,33 @@ ok-ww 自带更新会还原 `working` 和 `repo` 中的文件。两种恢复方�
 
 两种都不会动账号 Cookie 和任务配置。详见 [`docs/backup-and-restore.md`](docs/backup-and-restore.md)。
 
-### 为什么现在启动器不会再刷掉定制（v1.8.3）
+### 启动器什么时候会刷掉定制（v1.8.3 / v1.8.4 实测边界）
 
-启动器（pyappify）启动/自修复时的动作是：读 `app.json` 的 `current_version`（如 `v3.8.15`）→
+启动器（pyappify）正常启动/自检时：读 `app.json` 的 `current_version`（如 `v3.8.15`）→
 在 `repo` 里找**同名 git tag** → `git checkout -f <tag>`。`-f` 会丢弃工作区里所有未提交改动，
 所以：
 
 - 只把定制写成文件（不提交）→ 一次启动就没了；
 - 只把定制**提交**成 HEAD（v1.8.2 的做法）→ tag 还指向官方提交，`checkout -f` 照样切回官方；
-- 把**版本 tag 本身**指到定制提交（v1.8.3 的做法）→ 同一次 checkout 切出来的就是定制树。
+- 把**版本 tag 本身**指到定制提交（v1.8.3 的做法）→ 正常路径下 checkout 切出来的就是定制树。
 
 `restore.py` 每次部署会依次做：写文件 → 提交进 git（`local-custom-baseline`）→ 把 `v<版本号>` tag
 钉到该提交（原官方指向备份成 `official-v<版本号>`）→ 自检。
 
+**但 v1.8.4 补上了另一半真相**：如果 ok-ww 启动过程抛异常（启动崩溃），启动器会判定"安装损坏"，
+**绕开 git 直接从官方文件整份重装** `working`/`repo`。2026-11-25 23:56 就是这样：reflog 里那条
+`checkout: moving from 9d33201 to 9d33201` 的目标明明是我们的定制提交，事后 `HEAD` 却是官方
+`567f025`、`config.py` 回到 13380 字节。tag 钉得再准也拦不住这条路径。
+
+所以两道防线，优先级从高到低：
+
+1. **代码必须能正常启动** —— 这是最强的保护（v1.8.4 修的就是启动崩溃）；
+2. 正常启动时靠「提交 + 钉 tag」防止被校验还原。
+
 想临时回官方基线：`git -C "$env:LOCALAPPDATA/ok-ww/data/apps/ok-ww/repo" checkout official-v3.8.15`。
 
-> 唯一仍会覆盖的情况：官方发新版本、`app.json` 被刷新后，在更新卡片点「安装」。
-> 这是启动器的固有行为；真点了就重跑 `python restore.py`，它会重新提交并重新钉 tag。
+> 仍会覆盖的情况：官方发新版本后在更新卡片点「安装」；或启动崩溃触发自动修复。
+> 真发生了就重跑 `python restore.py`，它会重新提交并重新钉 tag，账号与任务配置不动。
 
 ## 目录结构
 
