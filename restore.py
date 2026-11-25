@@ -47,6 +47,10 @@ RELATIVE_FILES = [
     # 云鸣潮：每个账号一个浏览器 profile（纯 okww 侧目录切换，不改框架）
     'src/cloud_browser.py',
     'src/cloud_recovery.py',
+    # 远控/串流窗口(试验性)：UU远程/ToDesk/向日葵/Parsec 的窗口当 PC 设备，
+    # 启动时按「远控/串流窗口」配置切换（globals 里挂载）
+    'src/stream_window.py',
+    'src/globals.py',
     # 多账号：云游戏分支 + 「保存登录状态/切换账号」按钮（仅云设备显示）
     'src/task/MultiAccountDailyTask.py',
     'src/task/account/MultiAccountConfigStore.py',

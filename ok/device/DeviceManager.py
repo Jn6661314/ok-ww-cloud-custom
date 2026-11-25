@@ -69,6 +69,10 @@ class DeviceManager:
         supported_resolution = app_config.get(
             'supported_resolution', {})
         self.supported_ratio = parse_ratio(supported_resolution.get('ratio'))
+        self.supported_resolution = supported_resolution
+        # 试验性: 把远控/串流软件( UU远程 / ToDesk / 向日葵 / Parsec ... )的窗口当 PC 设备。
+        # 打开后 windows 设备不再按"鸣潮客户端 exe + UnrealWindow"匹配, 而是按窗口标题匹配。
+        self.stream_window_mode = False
         self.windows_capture_config = app_config.get('windows')
         self.adb_capture_config = app_config.get('adb')
         self.browser_config = app_config.get('browser')
@@ -156,6 +160,80 @@ class DeviceManager:
     def select_hwnd(self, exe, hwnd):
         self.config['selected_exe'] = exe
         self.config['selected_hwnd'] = hwnd
+
+    # ------------------------------------------------------------------
+    # 试验性: 远控 / 串流软件窗口作为设备
+    #
+    # UU远程、ToDesk、向日葵、Parsec、Moonlight 这类软件, 本质是把被控电脑的画面
+    # 显示成本机的一个窗口, 再把本机的键鼠事件转发过去。所以"抓这个窗口 + 往里发
+    # 真实键鼠事件"就等于在操作被控电脑上的游戏, 不需要任何远程专用逻辑。
+    #
+    # 两个必须注意的点:
+    #   1. 远控软件不处理窗口消息(PostMessage 打到它窗口上不会转发), 必须用 Pynput;
+    #   2. 窗口客户区必须是 16:9 且画面铺满, 否则坐标换算和识图会整体偏移。
+    # ------------------------------------------------------------------
+    def set_stream_window(self, title, force_pynput=True):
+        """把窗口标题匹配 ``title`` 的远控/串流窗口当作 windows 设备。
+
+        Args:
+            title: 窗口标题关键字, 字符串会被编译成忽略大小写的正则; 也可直接传 re.Pattern。
+            force_pynput: 强制用 PynputInteraction(真实键鼠事件), 远控软件基本都要求这样。
+
+        Returns:
+            bool: 是否成功切换。
+        """
+        if not title:
+            return False
+        pattern = title if hasattr(title, 'search') else re.compile(str(title).strip(), re.IGNORECASE)
+        if not getattr(pattern, 'pattern', ''):
+            return False
+        if self.windows_capture_config is None:
+            logger.warning('stream window mode needs a windows device config')
+            return False
+
+        self.stream_window_mode = True
+        # 清掉鸣潮客户端的 exe / 窗口类限制, 改成只按标题匹配远控窗口;
+        # top_hwnd_class 原本用于 PC 登录器, 对远控窗口没有意义。
+        self.windows_capture_config['exe'] = None
+        self.windows_capture_config['title'] = pattern
+        self.windows_capture_config['hwnd_class'] = None
+        self.windows_capture_config['top_hwnd_class'] = None
+        if force_pynput:
+            self.win_interaction_class = PynputInteraction
+            self.config['interaction'] = 'Pynput'
+        if self.hwnd_window is not None:
+            # 远控窗口的尺寸由远控软件(画质/缩放)决定, 程序自动 resize 只会把画面
+            # 拉变形或引入黑边, 所以直接禁用自动调整; 分辨率不对仍然会告警。
+            self.hwnd_window.try_resize_to = lambda *args, **kwargs: False
+            # HwndWindow 在 __init__ 里已经按 PC 客户端参数建好了, 这里重新指向远控窗口。
+            self.hwnd_window.update_window(pattern, None, 0, 0, -1, None, None)
+        logger.info(f'stream window mode enabled, title pattern: {pattern.pattern}')
+        return True
+
+    def check_stream_window_resolution(self):
+        """远控/串流模式下检查窗口比例, 不匹配时告警(不阻断, 实验性)。"""
+        if not self.stream_window_mode:
+            return None
+        window = self.hwnd_window
+        if window is None:
+            return None
+        width = getattr(window, 'width', 0) or getattr(window, 'client_width', 0)
+        height = getattr(window, 'height', 0) or getattr(window, 'client_height', 0)
+        if width <= 0 or height <= 0:
+            return None
+        ratio = width / height
+        if self.supported_ratio is None or abs(ratio - self.supported_ratio) <= 0.02:
+            return None
+        size = f'{width}x{height}'
+        message = (f'远控/串流窗口比例是 {size} (宽高比 {ratio:.3f}), 不是 16:9。'
+                   f'请把远控窗口拉成 16:9 并让画面铺满客户区, 同时确认被控电脑上的游戏是全屏运行, '
+                   f'否则点击坐标和识图会整体偏移。')
+        logger.warning(message)
+        try:
+            communicate.notification.emit(message, None, True, True, None, None, None)
+        except Exception as e:
+            logger.debug(f'emit stream window warning failed: {e}')
+        return message
 
     def refresh(self):
         logger.debug('calling refresh')
@@ -304,15 +382,24 @@ class DeviceManager:
                 self._replace_pc_devices(pc_devices)
                 return None
 
+            # 远控/串流模式下只按窗口标题匹配: exe 可能残留上次选中的 PC 客户端路径,
+            # 这里必须忽略, 否则会拿鸣潮 exe 去过滤远控窗口。
+            exe_filter = None if self.stream_window_mode else (
+                    self.windows_capture_config.get('exe') or self.config.get('selected_exe'))
             name, hwnd, full_path, x, y, width, height, hwnds = find_hwnd(self.windows_capture_config.get('title'),
-                                                                   self.windows_capture_config.get(
-                                                                       'exe') or self.config.get('selected_exe'), 0, 0,
+                                                                   exe_filter, 0, 0,
                                                                    player_id=-1,
                                                                    class_name=self.windows_capture_config.get(
                                                                        'hwnd_class'),
-                                                                   selected_hwnd=self.config.get('selected_hwnd'),
+                                                                   selected_hwnd=0 if self.stream_window_mode
+                                                                   else self.config.get('selected_hwnd'),
                                                                    top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
-            exe_list = self.windows_capture_config.get('exe') or self.config.get('selected_exe')
+            if self.stream_window_mode and not hwnd:
+                # 远控窗口还没打开: 不建"未连接"的占位设备, 让启动流程去等窗口出现,
+                # 而不是走进"启动游戏"分支误报"游戏路径不存在"。
+                self._replace_pc_devices({})
+                return None
+            exe_list = exe_filter
             if isinstance(exe_list, str):
                 exe_list = [exe_list]
             nick = name or (exe_list[0] if exe_list else "PC")
@@ -728,16 +815,26 @@ class DeviceManager:
             exe = self.windows_capture_config.get('exe')
             if not exe and not title and preferred.get('real_hwnd'):
                 exe = preferred.get('exe')
-                
-            self.ensure_hwnd(title, exe,
-                             hwnd_class=self.windows_capture_config.get('hwnd_class'),
-                             top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
+
+            if self.stream_window_mode:
+                # 远控窗口一般带标题栏(甚至可能有黑边), 传一个 16:9 参考尺寸后
+                # find_hwnd 会先在窗口内部找 16:9 的画面区域, HwndWindow 也会按
+                # 比例裁掉多出来的高度, 这样抓屏内容和坐标换算才能对上。
+                ref_width = preferred.get('width') or 1920
+                self.ensure_hwnd(title, exe, ref_width, max(1, int(ref_width * 9 / 16)),
+                                 hwnd_class=self.windows_capture_config.get('hwnd_class'),
+                                 top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
+            else:
+                self.ensure_hwnd(title, exe,
+                                 hwnd_class=self.windows_capture_config.get('hwnd_class'),
+                                 top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
             self.use_windows_capture()
             if not isinstance(self.interaction, self.win_interaction_class):
                 self.interaction = self.win_interaction_class(self.capture_method, self.hwnd_window)
             elif self.interaction:
                 self.interaction.capture = self.capture_method
             preferred['connected'] = self.capture_method is not None and self.capture_method.connected()
+            self.check_stream_window_resolution()
         elif preferred['device'] == 'browser':
             if not isinstance(self.capture_method, BrowserCaptureMethod):
                 if self.capture_method is not None:

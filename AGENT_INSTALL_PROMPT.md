@@ -56,9 +56,10 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
 【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
    a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是
       更老的官方版（如 v3.8.14），先让用户把官方 ok-ww 更新到 v3.8.15 再装补丁。
-   b. 确认装齐 29 个文件：working/src/task/MultiAccountDailyTask.py、
-      working/src/cloud_browser.py、working/src/task/BaseWWTask.py、
-      working/ok/device/DeviceManager.py、working/config.py 等是否存在且内容较新。
+   b. 确认装齐 31 个文件：working/src/task/MultiAccountDailyTask.py、
+      working/src/cloud_browser.py、working/src/stream_window.py、working/src/globals.py、
+      working/src/task/BaseWWTask.py、working/ok/device/DeviceManager.py、working/config.py
+      等是否存在且内容较新。
    c. 「保存登录状态 / 切换账号」只在设备选「云游戏」时出现——选成 PC 或安卓时不显示，
       这是设计行为，不是 bug。
    d. UID 遮罩由框架的 blur 机制实现，需要在设置里勾选「Enable Blur」（默认 Inpaint）。
@@ -72,6 +73,15 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
         （日志里是"MuMu 抓屏返回空画面"）；
       - 战斗识别乱切人：让用户在「设置 → MuMu/安卓 Config → MuMu 编队」手填编队；
       - 按键无反应：手游不认 input keyevent，必须保留模拟器的键位映射，不要改成纯 ADB 输入。
+
+   g. 如果用户想用 UU远程 / ToDesk / 向日葵 / Parsec 这类远控或串流窗口跑任务（试验性）：
+      - 设置 → 「远控/串流窗口(试验性)」勾 Enable，Window Title 填窗口标题关键字
+        （如 `UU远程`、`ToDesk`、`SunloginClient`、`Parsec`，多个用 `|` 分隔），改完**重启 ok-ww**；
+      - 前提必须逐条确认：被控电脑上游戏**全屏 16:9**（1920x1080/2560x1440/1600x900/1280x720）；
+        远控软件画质选「原画/原始分辨率」，不要自适应缩放；本机窗口客户区也是 16:9 且画面铺满，
+        不能有黑边；窗口保持前台不最小化；ok-ww 以管理员身份运行；远控端鼠标用绝对定位；
+      - 日志里出现"远控/串流窗口比例是 WxH ... 不是 16:9"就是窗口没拉对，按提示改窗口比例；
+      - 设备下拉里只有一个条目（远控窗口标题），鸣潮 PC 客户端不会同时出现，这是设计行为。
 
 请逐步执行并汇报结果。遇到报错先自行排查修复（比如路径、Python 版本、文件占用），
 不要停下来问我，除非确实需要我提供安装路径或登录凭据。完成后告诉我可以开始使用。

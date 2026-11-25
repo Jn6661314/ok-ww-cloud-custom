@@ -173,6 +173,21 @@ android_config_option = ConfigOption('MuMu/安卓 Config', {
         'MuMu 编队': 'MuMu/安卓编队角色名, 逗号分隔, 按编队槽位顺序填写; 支持中文名或英文名。填写后安卓端完全按此编队战斗, 不做画面识别; 留空则自动识别并锁定',
     }, show_at_tab=True, icon=Icon.PEOPLE)
 
+# 远控/串流窗口(试验性): UU远程 / ToDesk / 向日葵 / Parsec / Moonlight 这类软件把
+# 被控电脑的画面显示成本机的一个窗口, 并把本机键鼠转发过去。所以"抓这个窗口 +
+# 往里发真实键鼠事件"就等于在操作被控电脑上的游戏。前提是被控电脑上游戏全屏 16:9,
+# 且远控窗口客户区也是 16:9 且画面铺满(有黑边就会整体偏移)。
+stream_config_option = ConfigOption('远控/串流窗口(试验性)', {
+    'Enable': False,
+    'Window Title': '',
+    'Force Pynput': True,
+}, description='把 UU远程 / ToDesk / 向日葵 / Parsec 等远控或串流软件的窗口当作 PC 设备驱动(试验性)',
+   config_description={
+       'Enable': '开启后设备下拉里只列出标题匹配的远控/串流窗口, 鸣潮 PC 客户端不再出现; 改完需要重启 ok-ww。要求被控电脑上游戏全屏 16:9, 远控窗口客户区也是 16:9 且画面铺满',
+       'Window Title': '窗口标题关键字(正则, 忽略大小写), 例如 UU远程 或 ToDesk|SunloginClient|Parsec。留空则不生效',
+       'Force Pynput': '远控软件基本不处理窗口消息(PostMessage), 必须用真实键鼠事件, 保持开启',
+   }, show_at_tab=True, icon=Icon.PEOPLE)
+
 config = {
     'debug': False,  # Optional, default: False
     'custom_tasks': True,
@@ -200,7 +215,7 @@ config = {
         ["src.gui.CharacterCodeTab", "CharacterCodeTab"],
     ],
     'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option,
-                       android_config_option],
+                       android_config_option, stream_config_option],
     'ocr': {
         'lib': 'onnxocr',
         'auto_simplify': True,
