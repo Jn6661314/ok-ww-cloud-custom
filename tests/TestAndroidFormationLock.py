@@ -77,6 +77,9 @@ class StubTask(BaseWWTask):
     def log_warning(self, msg):
         self.logs.append(('warning', msg))
 
+    def log_error(self, message, exception=None, **kwargs):
+        self.logs.append(('error', f'{message}: {exception}'))
+
     def tr(self, text):
         return text
 
@@ -279,6 +282,18 @@ class TestAndroidLoadChars(unittest.TestCase):
             self.assertTrue(all(c is not None for c in stub.chars[:2]),
                             '兜底路径必须构建出角色对象')
             self.assertEqual(stub.chars[0].char_name, 'unknown')
+
+    def test_load_chars_android_survives_detect_exception(self):
+        """v1.5.14 回归: 识别环节抛异常(如 v1.5.13 的 AttributeError)时,
+        load_chars_android 不得炸掉 load_chars, 必须记日志并走上游兜底,
+        否则 do_check_in_combat 每 100ms 报错一次形成错误风暴。"""
+        stub = StubTask(chars=[None, None, None])
+        with patch.object(BaseWWTask, 'android_locked_team_identity', return_value=None), \
+                patch.object(BaseWWTask, 'android_detect_team_identity',
+                             side_effect=AttributeError('boom')):
+            self.assertTrue(BaseCombatTask.load_chars_android(stub, 0))
+        self.assertTrue(all(c is not None for c in stub.chars[:2]),
+                        '异常后兜底路径必须构建出角色对象')
 
 
 class TestAndroidConBox(unittest.TestCase):

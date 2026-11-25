@@ -1190,9 +1190,14 @@ class BaseCombatTask(CombatCheck):
           3. 首次无锁定时先做一次缩放识别并投票, 多数票先顶上;
           4. 全部失败 -> 退回上游 get_char_by_pos(PC 框)老行为, 保证战斗不中断。
         """
-        identity = self.android_locked_team_identity()
-        if identity is None:
-            identity = self.android_detect_team_identity()
+        try:
+            identity = self.android_locked_team_identity()
+            if identity is None:
+                identity = self.android_detect_team_identity()
+        except Exception as e:
+            # 识别环节任何异常都不能炸掉 load_chars(自恢复要求): 记日志后走兜底
+            self.log_error(f'android team identity failed, fallback to upstream: {e}')
+            identity = None
         if identity and len([name for name in identity if name]) >= 2:
             if self.android_build_chars_from_identity(tuple(identity), current_index):
                 return True

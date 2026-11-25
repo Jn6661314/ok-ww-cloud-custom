@@ -1414,7 +1414,7 @@ class BaseWWTask(BaseTask):
         from src.char.CharFactory import char_names
         found = []
         for box in boxes:
-            matched = self.find_best_match_in_box(box, char_names, self.ANDROID_DETECT_THRESHOLD,
+            matched = self.find_best_match_in_box(box, char_names, ANDROID_DETECT_THRESHOLD,
                                                   frame=canvas)
             found.append(matched.name if matched else None)
         self.log_debug(f'android team bar detect: {found}')
