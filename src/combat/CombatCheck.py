@@ -37,6 +37,14 @@ ANDROID_BREAK_OCR_RE = re.compile(r'破坏|谐振')
 ANDROID_BREAK_FULL_THRESHOLD = 0.85
 # OCR 检测区域: 谐振破坏提示出现在屏幕中央偏上, 取中央区域控制 OCR 耗时。
 ANDROID_BREAK_OCR_BOX = (0.2, 0.2, 0.75, 0.75)
+# 安卓(手游)端战斗坚持参数: MuMu 上 boss 潜地/无敌帧/切波次期间血条会消失一段时间,
+# PC 端有 has_health(血条仍在)时的 30 秒耐心路径, 但安卓端 has_target 和血条是同一个
+# 判定, 血条一没就走 target_enemy_time_out(默认 3 秒) -> break out of combat,
+# 表现为"打着打着莫名其妙不打了"。安卓端改为:
+ANDROID_RETARGET_TIMEOUT = 8    # 无血条时重锁定耐心 3 -> 8 秒
+ANDROID_RETARGET_RETRY = 6      # 重锁定失败后先重试一次再退出战斗
+ANDROID_NO_ENEMY_EXIT = 4.0     # 连续无敌人退出窗口 2 -> 4 秒
+ANDROID_FRAME_DEAD_MAX = 20     # 整帧全黑(抓屏故障)最多坚持秒数, 超过走正常判定
 
 
 class CombatCheck(BaseWWTask):
@@ -70,6 +78,7 @@ class CombatCheck(BaseWWTask):
         self.esc_count = 0
         self.can_break = False
         self._f_break_box = None
+        self._android_frame_dead_since = 0
 
     def tap_target(self, **kwargs):
         """锁敌: PC/云游戏用鼠标中键; 安卓端(MuMu)用 Y 键。
@@ -227,13 +236,46 @@ class CombatCheck(BaseWWTask):
     def is_boss(self):
         return self.find_one('boss_break_shield') or self.find_one('boss_break_lock')
 
-    def no_enemy_for(self, seconds=NO_ENEMY_EXIT_SECONDS):
-        """连续没有目标/血条的时间是否超过阈值。"""
+    def no_enemy_for(self, seconds=None):
+        """连续没有目标/血条的时间是否超过阈值。
+
+        安卓端默认 4 秒: boss 潜地/无敌帧/切波次期间血条消失是正常的,
+        2 秒就把战斗判死会导致"打着打着莫名其妙不打了"。
+        """
+        if seconds is None:
+            seconds = ANDROID_NO_ENEMY_EXIT if self.is_adb() else NO_ENEMY_EXIT_SECONDS
         now = time.monotonic()
         if not getattr(self, '_no_enemy_since', 0):
             self._no_enemy_since = now
             return False
         return now - self._no_enemy_since >= seconds
+
+    def _android_frame_is_dead(self):
+        """MuMu 抓屏偶发整帧黑/空: 把黑帧当"无敌人"会误退出战斗。
+
+        返回 True 表示当前帧不可用, 战斗判定应保持 in_combat 等抓屏恢复,
+        最多坚持 ANDROID_FRAME_DEAD_MAX 秒, 超时走正常判定让上层处理。
+        """
+        frame = getattr(self, 'frame', None)
+        if frame is None:
+            dead = True
+        else:
+            try:
+                dead = bool(is_pure_black(frame))
+            except Exception:
+                dead = False
+        if not dead:
+            self._android_frame_dead_since = 0
+            return False
+        now = time.time()
+        if not getattr(self, '_android_frame_dead_since', 0):
+            self._android_frame_dead_since = now
+            logger.warning('android combat: black/empty frame, keep in combat')
+            return True
+        if now - self._android_frame_dead_since > ANDROID_FRAME_DEAD_MAX:
+            self._android_frame_dead_since = 0
+            return False
+        return True
 
     def do_check_in_combat(self, target):
         # 安卓端(如 MuMu)掉线弹窗必须在战斗判定前处理。触发任务(AutoCombatTask)
@@ -243,6 +285,8 @@ class CombatCheck(BaseWWTask):
         # 点掉弹窗 + logged_in=False 后, 由 AutoLoginTask 每 5 秒自动重新登录。
         if self.is_adb() and self.handle_android_disconnect():
             return self.reset_to_false(reason='android disconnected')
+        if self.is_adb() and self._android_frame_is_dead():
+            return self.scene.set_in_combat()
         if self.in_liberation:
             return True
         if self._in_combat:
@@ -275,13 +319,27 @@ class CombatCheck(BaseWWTask):
                 return self.reset_to_false(reason='no enemy alive')
             if self.combat_end_condition is not None and self.combat_end_condition():
                 return self.reset_to_false(reason='end condition reached')
-            retarget_timeout = 30 if has_health else self.target_enemy_time_out
+            if has_health:
+                retarget_timeout = 30
+            elif self.is_adb():
+                # 安卓端 has_target 和血条是同一个判定, 血条一没就走默认 3 秒,
+                # boss 潜地/无敌帧/切波次会被误判战斗结束; 延长耐心并重试一次。
+                retarget_timeout = ANDROID_RETARGET_TIMEOUT
+            else:
+                retarget_timeout = self.target_enemy_time_out
             if self.target_enemy(wait=True, time_out=retarget_timeout, check_health=has_health):
                 logger.debug(f'retarget enemy succeeded')
                 return self.scene.set_in_combat()
             if self.should_check_monthly_card() and self.handle_monthly_card():
                 return self.scene.set_in_combat()
             logger.error('target_enemy failed, try recheck break out of combat')
+            if self.is_adb():
+                # 一次失败不直接退出: 重试一轮, 避免血条短暂消失误判结束战斗。
+                self.sleep(1.5)
+                if self.target_enemy(wait=True, time_out=ANDROID_RETARGET_RETRY, check_health=has_health):
+                    logger.debug('android retarget retry succeeded')
+                    return self.scene.set_in_combat()
+                logger.error('android retarget retry failed, break out of combat')
             return self.reset_to_false(reason='target enemy failed')
         else:
             from src.task.AutoCombatTask import AutoCombatTask
@@ -471,6 +529,10 @@ class CombatCheck(BaseWWTask):
                 health_lost_start = None
                 while time.time() - start < timeout:
                     self.tap_target(interval=CLOUD_RETARGET_INTERVAL if self.is_browser() else 0.2)
+                    if self.is_adb():
+                        # 等待 Y 键锁敌期间继续普攻(安卓无坐标点击=右下角攻击按钮),
+                        # 敌人重新出现/血条恢复时保持输出, 而不是站着干等。
+                        self.click(after_sleep=0.1)
                     if self.target_visible():
                         return True
                     self.next_frame()

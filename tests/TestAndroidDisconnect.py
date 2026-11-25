@@ -46,6 +46,10 @@ class DisconnectDouble:
         self.handled += 1
         return self._disconnected
 
+    def _android_frame_is_dead(self):
+        # v1.5.10 黑帧保护: 测试桩视为画面正常, 不拦截。
+        return False
+
     def reset_to_false(self, reason=""):
         self.reset_reason = reason
         return False

@@ -42,6 +42,7 @@ PLAN = [
     ('v1.5.7', 'v1.5.7 · 修复 MuMu 手游端锁敌也不打 / Fix MuMu mobile combat doing nothing', 'cb44f95'),
     ('v1.5.8', 'v1.5.8 · 修复 MuMu 打着打着停 / 按编队识别队伍 / AutoCombatTask 兼容', 'HEAD'),
     ('v1.5.9', 'v1.5.9 · 修复 MuMu 无法谐振破坏（识别提示图标并点击）/ Fix MuMu Resonance Break (detect and tap the prompt)', 'HEAD'),
+    ('v1.5.10', 'v1.5.10 · 修复 MuMu 打着打着不打了（重锁定耐心/重试/黑帧保护）/ Fix MuMu combat stopping unexpectedly (patient retarget, retry, black-frame guard)', 'HEAD'),
 ]
 
 
