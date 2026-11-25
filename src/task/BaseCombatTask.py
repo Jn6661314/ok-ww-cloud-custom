@@ -169,7 +169,12 @@ class BaseCombatTask(CombatCheck):
     def refresh_cd(self):
         if self.scene.cd_refreshed:
             return
-        index = self.get_current_char().index
+        current_char = self.get_current_char()
+        if current_char is None:
+            # 角色尚未加载时不要读取 .index, 否则 AttributeError 打断战斗。
+            self.log_debug('refresh_cd: no current char, skip')
+            return
+        index = current_char.index
         cds = self.cds.get(index)
         if cds is None:
             cds = {}
@@ -205,7 +210,10 @@ class BaseCombatTask(CombatCheck):
     def get_cd(self, box_name, char_index=None):
         self.refresh_cd()
         if char_index is None:
-            char_index = self.get_current_char().index
+            current_char = self.get_current_char()
+            if current_char is None:
+                return 0
+            char_index = current_char.index
         if cds := self.cds.get(char_index):
             time_elapsed = self.time_elapsed_accounting_for_freeze(cds['time'])
             return cds[box_name] - time_elapsed
@@ -582,7 +590,15 @@ class BaseCombatTask(CombatCheck):
         try:
             while self.in_combat():
                 logger.debug(f'combat_once loop {self.chars}')
-                self.get_current_char().perform()
+                current_char = self.get_current_char()
+                if current_char is None:
+                    # 角色对象还没就绪(安卓端偶发 load_chars 尚未标记当前角色),
+                    # 重新加载一次再试, 不要直接 .perform() 抛 AttributeError 打断战斗。
+                    self.log_warning('combat_once: no current char, reload chars and retry')
+                    self.load_chars()
+                    self.sleep(0.1)
+                    continue
+                current_char.perform()
         except CharDeadException as e:
             raise e
         except NotInCombatException as e:
@@ -849,6 +865,14 @@ class BaseCombatTask(CombatCheck):
                 continue
             if now - last_click > 0.1:
                 self.send_key(switch_to.index + 1)
+                if self.is_adb():
+                    # 安卓端队伍栏是圆形头像, in_team() 返回的是脚本维护的逻辑
+                    # 下标, 不会像 PC 那样随画面自动变化。发出切人键后必须主动
+                    # 推进到目标下标, 否则下面 `current_index != switch_to.index`
+                    # 会一直成立, 10 秒后抛 raise_not_in_combat('failed switch
+                    # chars'), 表现为切人时战斗反复中断。
+                    self._android_current_index = switch_to.index
+                    self.log_debug(f'switch_next_char(android): logical index -> {switch_to.index}')
                 self.sleep(0.001)
                 last_click = now
                 self.log_debug('switch not detected, send click')
@@ -953,6 +977,22 @@ class BaseCombatTask(CombatCheck):
         for char in self.chars:
             if char and char.is_current_char:
                 return char
+        # 安卓端(MuMu)队伍栏是圆形头像, 无法从画面读出当前出战角色下标。
+        # 若 load_chars() 尚未运行或角色对象被重置, is_current_char 会全部为 False,
+        # 直接返回 None 会让 combat_once() 的 .perform() / refresh_cd() 的 .index
+        # 抛 AttributeError, 战斗刚进入就崩溃。这里按脚本维护的逻辑下标兜底选一个
+        # 角色, 保证战斗链路永远拿得到当前角色对象。
+        if self.is_adb():
+            index = getattr(self, '_android_current_index', 0)
+            if not isinstance(index, int) or not 0 <= index < len(self.chars):
+                index = 0
+            fallback = self.chars[index]
+            if fallback is None:
+                fallback = next((c for c in self.chars if c is not None), None)
+            if fallback is not None:
+                fallback.is_current_char = True
+                self.log_debug(f'get_current_char(android): fallback to {fallback} index={fallback.index}')
+                return fallback
         if raise_exception and not self.in_team()[0]:
             self.raise_not_in_combat('can find current char!!')
         # self.load_chars()

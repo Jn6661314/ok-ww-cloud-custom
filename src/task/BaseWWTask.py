@@ -1142,10 +1142,24 @@ class BaseWWTask(BaseTask):
             return False, -1, 1
 
         self.logged_in = True
-        # 安卓端无法可靠区分当前出战角色的下标(头像与 PC 徽章布局不同),
-        # 队伍人数按"至少 1 名"处理, 战斗切人逻辑会退化为不切人。
-        self.log_debug(f'in_team(android): in world ({reason})')
-        return True, -1, 2
+        # 安卓端队伍栏是圆形头像, PC 的 char_N_text 数字徽章模板永远匹配不上,
+        # 无法像 PC 那样从画面读出"当前出战角色下标"。原先这里恒返回 -1,
+        # 连锁后果:
+        #   load_chars() 里没有任何角色的 index 能匹配 -1 -> is_current_char 全 False
+        #   -> get_current_char() 返回 None
+        #   -> combat_once() 的 self.get_current_char().perform() 抛
+        #      AttributeError: 'NoneType' object has no attribute 'perform'
+        #   -> 战斗刚进入就崩溃/错误恢复反复重启, 表现为"MuMu 无法自动战斗"。
+        #   switch_next_char() 靠 current_index == switch_to.index 判定切人成功,
+        #   恒 -1 还会让切人等 10 秒后抛 raise_not_in_combat。
+        # 改为维护一个脚本内部的逻辑下标: 初始 0, 每次真正发出切人键后由
+        # BaseCombatTask.switch_next_char() 推进, 保证战斗链路始终有当前角色。
+        current_index = getattr(self, '_android_current_index', 0)
+        if not isinstance(current_index, int) or not 0 <= current_index < 3:
+            current_index = 0
+        self._android_current_index = current_index
+        self.log_debug(f'in_team(android): in world ({reason}), logical current char={current_index}')
+        return True, current_index, 2
 
         # Function to check if a component forms a ring
 
