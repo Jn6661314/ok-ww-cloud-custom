@@ -153,7 +153,10 @@ def make_rahai(queue=None, is_adb=False, **attrs):
         task.calls.append(('ocr', args, getattr(match, 'pattern', None)))
         results = task._ocr_results.pop(0) if task._ocr_results else []
         if match and results:
-            results = [b for b in results if match.search(b.name)]
+            if isinstance(match, str):
+                results = [b for b in results if match in b.name]
+            else:
+                results = [b for b in results if match.search(b.name)]
         return results
 
     task.wait_until = wait_until
@@ -198,9 +201,9 @@ class TestTutorialConfirm(unittest.TestCase):
 
 
 class TestEndlessPage(unittest.TestCase):
-    """无尽模式详情页: 无难度选项, 明确提示不支持自动挑战。"""
+    """无尽模式: v1.5.18 起直接支持开始/加入对局, 不再提示不支持。"""
 
-    def test_endless_message(self):
+    def _detail_endless_task(self):
         task = make_rahai()
         task._event_title = lambda: [box('拉海洛方块·逆转')]
         task._ocr_results = [
@@ -210,9 +213,21 @@ class TestEndlessPage(unittest.TestCase):
             [],  # wide 简单
             [box('无尽模式')],  # _endless_page
         ]
-        with self.assertRaises(ChallengeFailed) as ctx:
-            task._challenge_current_details(object())
-        self.assertIn('无尽模式', str(ctx.exception))
+        return task
+
+    def test_endless_details_direct_start(self):
+        """无尽模式详情页: _challenge_current_details 直接转 _challenge_endless。"""
+        task = self._detail_endless_task()
+        played = []
+        task._challenge_endless = lambda interaction: played.append(interaction)
+        task._challenge_current_details(object())
+        self.assertEqual(len(played), 1, '必须直接调用 _challenge_endless 开始无尽')
+
+    def test_endless_still_startable(self):
+        task = self._detail_endless_task()
+        task._challenge_endless = lambda interaction: None
+        # 不得抛 ChallengeFailed
+        task._challenge_current_details(object())
 
     def test_generic_message_when_not_endless(self):
         task = make_rahai()
@@ -222,6 +237,162 @@ class TestEndlessPage(unittest.TestCase):
             task._challenge_current_details(object())
         self.assertIn('难度', str(ctx.exception))
         self.assertNotIn('无尽', str(ctx.exception))
+
+
+class TestEndlessIngame(unittest.TestCase):
+    """已在无尽模式对局内: 局内 UI/弹窗/棋盘 任一特征即可识别。"""
+
+    def test_ingame_ui_detected(self):
+        task = make_rahai()
+        task._event_title = lambda: [box('拉海洛方块·逆转')]
+        task._ocr_results = [
+            [],                     # ENDLESS_POPUP_RE 区域
+            [box('历史最高')],       # ENDLESS_INGAME_RE 区域
+        ]
+        task._playable_board = lambda: None
+        self.assertTrue(task._endless_ingame())
+
+    def test_popup_text_detected(self):
+        task = make_rahai()
+        task._event_title = lambda: [box('拉海洛方块·逆转')]
+        task._ocr_results = [
+            [box('玩家可以一直游玩争取获取更高的分数，直到失败')],  # 弹窗文字
+        ]
+        task._playable_board = lambda: None
+        self.assertTrue(task._endless_ingame())
+
+    def test_board_detected(self):
+        task = make_rahai()
+        task._event_title = lambda: [box('拉海洛方块·逆转')]
+        task._ocr_results = [[], []]
+        task._playable_board = lambda: object()
+        self.assertTrue(task._endless_ingame())
+
+    def test_not_ingame_without_title(self):
+        task = make_rahai()
+        task._event_title = lambda: []
+        self.assertFalse(task._endless_ingame())
+
+    def test_endless_goal_parse(self):
+        task = make_rahai()
+        task._ocr_results = [[box('达到9999分结算可得首通奖励', y=170)]]
+        self.assertEqual(task._endless_goal(), 9999)
+
+    def test_endless_goal_absent(self):
+        task = make_rahai()
+        task._ocr_results = [[box('进行中 0/2', y=170)]]
+        self.assertIsNone(task._endless_goal())
+
+    def test_endless_score_parse(self):
+        task = make_rahai()
+        task._ocr_results = [[box('拉海洛方块·逆转', y=40), box('3600', y=90)]]
+        self.assertEqual(task._endless_score(), 3600)
+
+
+class TestChallengeButtonWide(unittest.TestCase):
+    """开始按钮宽域兜底: 无尽模式/手游端按钮位置可能偏移。"""
+
+    def test_narrow_wins(self):
+        task = make_rahai()
+        task._ocr_results = [[box('开始挑战', y=1010)]]
+        self.assertIsNotNone(task._challenge_button(wide=True))
+
+    def test_wide_fallback_plain_start(self):
+        task = make_rahai()
+        task._ocr_results = [
+            [],                 # narrow "开始挑战"
+            [box('开始', y=990)],  # wide "^开始(挑战)?$"
+        ]
+        self.assertIsNotNone(task._challenge_button(wide=True))
+
+    def test_none_when_absent(self):
+        task = make_rahai()
+        task._ocr_results = [[], []]
+        self.assertIsNone(task._challenge_button(wide=True))
+
+
+class TestChallengeEndless(unittest.TestCase):
+    """无尽模式主流程: 详情页开始 / 加入局内 / 目标分退出结算。"""
+
+    def test_start_from_detail_page(self):
+        task = make_rahai()
+        task._tutorial_confirm = lambda: False
+        task._playable_board = lambda: None
+        buttons = [box('开始挑战', y=1010), None]  # 点击后按钮消失
+        task._challenge_button = lambda wide=False: buttons.pop(0)
+        task.next_frame = lambda: None
+        task._ready_board = lambda: True
+        task._play_board = lambda interaction, endless=False, max_moves=160: 'reward'
+        task._challenge_endless(object())
+        self.assertTrue(any('开始挑战：无尽模式' in c[1] for c in task.calls if c[0] == 'info'))
+
+    def test_join_running_game(self):
+        task = make_rahai()
+        task._tutorial_confirm = lambda: False
+        task._playable_board = lambda: object()
+        task._play_board = lambda interaction, endless=False, max_moves=160: 'dead'
+        task._challenge_endless(object())
+        self.assertTrue(any('直接加入' in c[1] for c in task.calls if c[0] == 'info'))
+
+    def test_goal_triggers_settle(self):
+        task = make_rahai()
+        task._tutorial_confirm = lambda: False
+        task._playable_board = lambda: object()
+        task._play_board = lambda interaction, endless=False, max_moves=160: 'goal'
+        settled = []
+        task._endless_exit_and_settle = lambda: settled.append(True)
+        task._challenge_endless(object())
+        self.assertEqual(settled, [True], '达到目标分后必须退出结算')
+
+    def test_no_start_button_raises(self):
+        task = make_rahai()
+        task._tutorial_confirm = lambda: False
+        task._playable_board = lambda: None
+        task._challenge_button = lambda wide=False: None
+        with self.assertRaises(ChallengeFailed):
+            task._challenge_endless(object())
+
+
+class TestPlayBoardEndless(unittest.TestCase):
+    """_play_board 无尽模式: 无合法落点视为本局结束而不是报错。"""
+
+    def test_dead_returns_not_raises(self):
+        import src.task.RahaiBlocksTask as mod
+        task = make_rahai()
+        task.next_frame = lambda: None
+        task._clickable = lambda interaction: True
+        task._playable_board = lambda: SimpleNamespace(
+            pieces=[], mask=0, fixed=0, fault=0)
+        with patch.object(mod, 'choose_move', return_value=None):
+            reason = task._play_board(object(), endless=True, max_moves=5)
+        self.assertEqual(reason, 'dead')
+
+    def test_normal_mode_still_raises(self):
+        import src.task.RahaiBlocksTask as mod
+        task = make_rahai()
+        task.next_frame = lambda: None
+        task._clickable = lambda interaction: True
+        task._playable_board = lambda: SimpleNamespace(
+            pieces=[], mask=0, fixed=0, fault=0)
+        with patch.object(mod, 'choose_move', return_value=None):
+            with self.assertRaises(ChallengeFailed):
+                task._play_board(object(), endless=False, max_moves=5)
+
+
+class TestEndlessExitSettle(unittest.TestCase):
+    """达到目标分后退出结算: 点 X -> 确认/离开 -> 奖励。"""
+
+    def test_clicks_leave_then_reward(self):
+        task = make_rahai()
+        task._ocr_results = [
+            [],                    # 离开 按钮第一查(wait_until 直接调 func)
+            [box('离开', y=700)],   # wait_until 队列返回
+        ]
+        task._wait_queue = [box('离开', y=700)]  # wait_until 直接给返回值
+        task._reward = lambda: [box('获得')]
+        task._endless_exit_and_settle()
+        clicks = [c for c in task.calls if c[0] == 'click']
+        self.assertGreaterEqual(len(clicks), 2, '至少点了退出按钮和奖励')
 
 
 class TestWideDifficulty(unittest.TestCase):

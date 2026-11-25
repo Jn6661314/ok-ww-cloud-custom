@@ -13,11 +13,15 @@ STAGE_PROGRESS = re.compile(r"进行中.*?(\d+)\s*[/／]\s*(\d+)")
 STAGE_STATUS = re.compile(r"进行中|已(?:通关|完成)|(?:\d+\s*(?:天|小时|分钟))")
 
 # 手游(MuMu/安卓)端适配:
-# - 无尽模式详情页没有 简单/困难 难度选项, 任务无法自动挑战, 明确提示玩家。
-# - 开局首关会弹"无尽模式"玩法说明弹窗(居中"确认"按钮), 不点掉会挡住棋盘识别。
+# - 无尽模式没有简单/困难难度选项, v1.5.18 起直接支持: 从无尽模式页面开始,
+#   或加入已在进行中的无尽对局; 达到目标分数("达到9999分结算可得首通奖励")
+#   后主动退出结算。
+# - 开局会弹"无尽模式"玩法说明弹窗(居中"确认"按钮), 不点掉会挡住棋盘识别。
 # - 手游详情页布局与 PC 有差异, 难度/开始按钮识别提供宽域 OCR 兜底。
 ENDLESS_RE = re.compile(r"无尽模式|無盡模式")
 ENDLESS_POPUP_RE = re.compile(r"玩家可以一直游玩|直到失败")
+ENDLESS_INGAME_RE = re.compile(r"历史最高|歷史最高|达到\d+分结算|達到\d+分結算")
+ENDLESS_GOAL_RE = re.compile(r"达到(\d+)分结算|達到(\d+)分結算")
 ANDROID_DIFFICULTY_BOX = (.5, .05, 1.0, .7)
 
 
@@ -30,9 +34,10 @@ class RahaiBlocksTask(BaseTask):
         super().__init__(*args, **kwargs)
         self.name = "3.8 拉海洛方块·逆转"
         self.description = (
-            "从活动关卡列表或关卡详情页开始，挑战所有已解锁且未通关的关卡。"
+            "从活动关卡列表或关卡详情页开始，挑战所有已解锁且未通关的关卡；"
+            "支持无尽模式（从无尽页面开始或直接加入进行中的对局，达到目标分数后自动结算）。"
             "支持简体中文 PC 客户端、云鸣潮与 MuMu/安卓模拟器"
-            "（模拟器需保持 MuMu 窗口在前台；无尽模式暂不支持自动挑战）。"
+            "（模拟器需保持 MuMu 窗口在前台）。"
         )
         self.group_name = "Daily Activities"
         self.group_icon = task_icon("category-daily")
@@ -68,18 +73,35 @@ class RahaiBlocksTask(BaseTask):
                 stages.append((title, status))
         return sorted(stages, key=lambda stage: stage[1].x)
 
-    def _challenge_button(self):
+    def _challenge_button(self, wide=False):
         boxes = self.ocr(.69, .89, .96, .95, match="开始挑战")
-        return boxes[0] if boxes else None
+        if boxes:
+            return boxes[0]
+        if wide:
+            # 手游/无尽模式开始按钮位置可能偏移: 宽域兜底("开始"或"开始挑战")
+            boxes = self.ocr(.60, .84, 1.0, 1.0, match=re.compile(r"^开始(?:挑战)?$"))
+            if boxes:
+                return boxes[0]
+        return None
 
     def _stage_details(self):
         return self._event_title() and self.ocr(.68, .43, .82, .48, match="关卡目标")
 
     def _endless_page(self):
-        """当前是否处于无尽模式(详情页或玩法弹窗)。无尽模式没有难度选项。"""
+        """当前是否处于无尽模式(详情页/玩法弹窗/对局内)。无尽模式没有难度选项。"""
         return (self._event_title()
-                and (self.ocr(.0, .15, .7, .75, match=ENDLESS_RE)
-                     or self.ocr(.0, .15, .7, .75, match=ENDLESS_POPUP_RE)))
+                and (self.ocr(.0, .10, .7, .75, match=ENDLESS_RE)
+                     or self.ocr(.0, .10, .7, .75, match=ENDLESS_POPUP_RE)
+                     or self.ocr(.0, .10, .35, .25, match=ENDLESS_INGAME_RE)))
+
+    def _endless_ingame(self):
+        """已在无尽模式对局内(玩法弹窗未关/局内计分 UI 可见/棋盘可见)。"""
+        if not self._event_title():
+            return False
+        if (self.ocr(.0, .10, .7, .75, match=ENDLESS_POPUP_RE)
+                or self.ocr(.0, .10, .35, .25, match=ENDLESS_INGAME_RE)):
+            return True
+        return bool(self._playable_board())
 
     def _selected_difficulty(self, difficulty, wide=False):
         """详情页当前选中的难度是否为 difficulty。
@@ -243,8 +265,8 @@ class RahaiBlocksTask(BaseTask):
 
         v1.5.16: 玩家手动打开某个关卡页面后直接跑任务, 不再要求必须停在列表页。
         难度以详情页当前选中的为准(OCR 识别"简单/困难"), 避免误切难度。
-        v1.5.17: 手游端布局差异导致 PC 区域读不到难度时, 用宽域 OCR 兜底;
-        无尽模式没有难度选项, 明确提示不支持自动挑战。
+        v1.5.17: 手游端布局差异导致 PC 区域读不到难度时, 用宽域 OCR 兜底。
+        v1.5.18: 无尽模式没有难度选项, 直接开始无尽挑战(详见 _challenge_endless)。
         """
         difficulty = None
         for name in ("困难", "简单"):
@@ -256,10 +278,79 @@ class RahaiBlocksTask(BaseTask):
             difficulty = self._widest_selected_difficulty()
         if difficulty is None:
             if self._endless_page():
-                raise ChallengeFailed(
-                    "当前是「无尽模式」页面，暂不支持自动挑战；请打开简单/困难关卡详情页后再运行。")
+                self._challenge_endless(interaction)
+                return
             raise ChallengeFailed("无法识别关卡页面当前选中的难度。")
         self._start_and_play(interaction, difficulty, f"关卡页面直接开始 · {difficulty}")
+
+    def _endless_goal(self):
+        """无尽模式目标分数(局内文案"达到9999分结算可得首通奖励")。"""
+        for goal_box in self.ocr(.0, .10, .35, .25):
+            m = ENDLESS_GOAL_RE.search(goal_box.name)
+            if m:
+                return int(m.group(1) or m.group(2))
+        return None
+
+    def _endless_score(self):
+        """无尽模式当前分数(左上计分条上的独立数字)。"""
+        for score_box in self.ocr(.03, .04, .28, .13):
+            m = re.fullmatch(r"\d+", score_box.name.strip())
+            if m:
+                return int(m.group(0))
+        return None
+
+    def _challenge_endless(self, interaction):
+        """无尽模式: 从无尽页面开始, 或加入已在进行中的对局。
+
+        无尽模式没有简单/困难难度: 点击开始(首局先点掉玩法说明弹窗)后一直
+        落块消行, 达到目标分数(如 9999 分)主动退出结算; 无合法落点则等游戏
+        自动结算。结束后由调用方负责返回关卡列表。
+        """
+        if self._tutorial_confirm():
+            self.sleep(.5)
+            self.next_frame()
+        if self._playable_board():
+            self.log_info("检测到无尽模式对局，直接加入继续游玩。")
+        else:
+            start = self._challenge_button(wide=True)
+            if not start:
+                raise ChallengeFailed("无法识别无尽模式的开始按钮。")
+            self.log_info("开始挑战：无尽模式")
+            for _ in range(2):
+                self.click(start, down_time=.09, after_sleep=1.3)
+                self.next_frame()
+                start = self._challenge_button(wide=True)
+                if not start:
+                    break
+            else:
+                raise ChallengeFailed("开始挑战按钮未响应。")
+            if not self.wait_until(self._ready_board, time_out=15):
+                raise ChallengeFailed("无法识别无尽模式棋盘。")
+        reason = self._play_board(interaction, endless=True, max_moves=600)
+        self.log_info(f"无尽模式本局结束（{reason}）。")
+        if reason in ('goal', 'cap'):
+            self._endless_exit_and_settle()
+        elif self.wait_until(self._reward, time_out=3):
+            # 失败/无落点后游戏自动结算: 点掉奖励弹窗
+            self.click(.5, .88, after_sleep=.8)
+
+    def _endless_exit_and_settle(self):
+        """达到分数目标后主动退出无尽模式并结算领取奖励。"""
+        self.click(.942, .06, after_sleep=.8)
+
+        def leave_or_confirm():
+            leave = self.ocr(.55, .55, .78, .72, match=re.compile(r"^离开$|^離開$"))
+            if leave:
+                return leave[0]
+            confirm = self.ocr(.38, .78, .62, .98,
+                               match=re.compile(r"^确认$|^確認$|^确定$|^確定$"))
+            return confirm[0] if confirm else None
+
+        button = self.wait_until(leave_or_confirm, time_out=4)
+        if button:
+            self.click(button, after_sleep=1.0)
+        if self.wait_until(self._reward, time_out=6):
+            self.click(.5, .88, after_sleep=.8)
 
     def run(self):
         # 云游戏出错时原地重跑整个关卡扫描流程。这里不刷新页面:
@@ -287,16 +378,24 @@ class RahaiBlocksTask(BaseTask):
             # v1.5.16: 支持直接在关卡详情页启动 —— 先把当前选中的难度打完,
             # 然后回列表继续扫描其余关卡; 失败只警告, 不中断后续扫描。
             if self.wait_until(self._stage_details, time_out=3):
-                self.log_info("当前已在关卡页面，直接开始当前选中的难度。")
+                self.log_info("当前已在关卡页面，直接开始当前选中的难度（无尽模式则直接开始无尽挑战）。")
                 try:
                     self._challenge_current_details(interaction)
                 except ChallengeFailed as exc:
                     self.log_warning(f"关卡页面直接开始失败：{exc}")
                 stages = self._return_to_list()
+            elif self._endless_ingame():
+                # v1.5.18: 已在无尽模式对局内(玩法弹窗或棋盘可见) -> 直接加入
+                self.log_info("检测到无尽模式对局，直接加入继续游玩。")
+                try:
+                    self._challenge_endless(interaction)
+                except ChallengeFailed as exc:
+                    self.log_warning(f"无尽模式挑战失败：{exc}")
+                stages = self._return_to_list()
             else:
                 raise FatalTaskError(
-                    "请先打开简体中文的「拉海洛方块·逆转」活动关卡列表或任一关卡详情页"
-                    "（MuMu/安卓端同样支持；无尽模式页面暂不支持自动挑战）。")
+                    "请先打开简体中文的「拉海洛方块·逆转」活动关卡列表、任一关卡详情页"
+                    "或无尽模式页面（MuMu/安卓端同样支持）。")
 
         stages = self._first_page(interaction, stages)
         attempted = set()
@@ -455,15 +554,21 @@ class RahaiBlocksTask(BaseTask):
                 from pynput import mouse
                 mouse.Controller().release(mouse.Button.left)
 
-    def _play_board(self, interaction):
+    def _play_board(self, interaction, endless=False, max_moves=160):
+        """下完一局棋盘。返回结束原因: 'reward'(结算奖励) / 'dead'(无合法落点) /
+        'goal'(无尽模式达到目标分数) / 'cap'(落块次数上限); 普通模式结束原因
+        依旧为 None(仅结算奖励时返回), 异常照常抛出。"""
         misses = 0
         rejected = set()
-        for _ in range(160):
+        goal = self._endless_goal() if endless else None
+        if endless and goal:
+            self.log_info(f"无尽模式目标分数：{goal}，达到后自动退出结算。")
+        for move_no in range(max_moves):
             self.next_frame()
             board = self._playable_board() or self.wait_until(self._playable_board, time_out=2)
             if not board:
                 if self.wait_until(self._reward, time_out=3):
-                    return
+                    return 'reward'
                 # 挑战中游戏可能弹出玩法说明(如无尽模式介绍/故障方块介绍),
                 # 点掉"确认"/关闭后棋盘恢复。
                 if self.wait_until(self._tutorial_confirm, time_out=2):
@@ -472,11 +577,17 @@ class RahaiBlocksTask(BaseTask):
                 if self.wait_until(self._close_help_popup, time_out=2):
                     self.sleep(.5)
                     continue
+                if endless:
+                    # 无尽模式棋盘消失视为进入结算/退出界面
+                    return 'ended'
                 raise ChallengeFailed("棋盘消失，未确认通关。")
             if not self._clickable(interaction):
                 raise RuntimeError("Game lost foreground focus; no further moves were sent.")
             move = choose_move(board, excluded=rejected)
             if move is None:
+                if endless:
+                    self.log_info("无尽模式无合法落点，本局结束。")
+                    return 'dead'
                 raise ChallengeFailed("剩余方块无合法落点。")
             if not self._place(interaction, board, move):
                 misses += 1
@@ -487,6 +598,11 @@ class RahaiBlocksTask(BaseTask):
                 continue
             misses = 0
             rejected.clear()
+            if endless and goal and move_no % 10 == 9:
+                score = self._endless_score()
+                if score is not None and score >= goal:
+                    self.log_info(f"无尽模式已达到分数要求 {score}/{goal}，退出结算。")
+                    return 'goal'
             expected, lines = clear_lines(board.mask | move.mask, board.fixed, board.fault)
             self.log_info(f"Rahai Blocks: slot={move.slot + 1}, rotation={move.turns * 90}, "
                           f"cell=({move.row + 1},{move.col + 1}), lines={lines}, "
@@ -507,4 +623,6 @@ class RahaiBlocksTask(BaseTask):
                 # 以重新读到的棋盘为准继续, 不中断挑战。
                 self.log_warning(f"Rahai Blocks: expected={expected:#018x}, "
                                  f"actual={actual.mask:#018x}; continuing from the observed board")
+        if endless:
+            return 'cap'
         raise ChallengeFailed("达到落块次数上限，未确认通关。")
