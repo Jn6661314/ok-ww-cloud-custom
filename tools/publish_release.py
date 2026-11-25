@@ -36,6 +36,7 @@ PLAN = [
     ('v1.5.1', 'v1.5.1 · 修复全新安装装不全导致的启动失败 / Fix fresh install missing most files', 'HEAD'),
     ('v1.5.2', 'v1.5.2 · 修复 MuMu/安卓端无法自动战斗 / Fix MuMu Android auto-combat crash', '2463fd3'),
     ('v1.5.3', 'v1.5.3 · 修复 MuMu 手动锁定后仍不战斗 / Fix MuMu still not fighting after target lock', 'dd2ba22'),
+    ('v1.5.4', 'v1.5.4 · 修复 MuMu 切人卡死导致打着打着停 / Fix MuMu combat stalling on character switch', 'c986d31'),
 ]
 
 
