@@ -841,7 +841,14 @@ class BaseCombatTask(CombatCheck):
             if not (isinstance(switch_to, ShoreKeeper) and has_intro):
                 self.check_combat()
             now = time.time()
-            _, current_index, _ = self.in_team()
+            if self.is_adb():
+                # 安卓端用脚本维护的逻辑下标, 不依赖 in_team() 的画面判定 ——
+                # 切人/intro 动画期间 HUD 圆形头像会短暂消失, in_team_android()
+                # 会返回 -1, 用它会让下面 current_index 判定永远失败并等 10 秒
+                # 抛 failed switch chars, 表现为切人卡死/战斗反复中断。
+                current_index = getattr(self, '_android_current_index', 0)
+            else:
+                _, current_index, _ = self.in_team()
             if current_index == current_char.index:
                 self.update_lib_portrait_icon()
                 refreshed_has_intro = has_intro or current_char.is_con_full()
@@ -879,7 +886,12 @@ class BaseCombatTask(CombatCheck):
                 self.click()
                 self.sleep(0.001)
             in_team, current_index, size = self.in_team()
-            if not in_team:
+            if self.is_adb():
+                # 安卓端始终用脚本维护的逻辑下标, in_team() 在切人动画期间
+                # 会因 HUD 圆形头像消失返回 -1, 不能用它判定切人是否完成。
+                current_index = getattr(self, '_android_current_index', 0)
+            if not in_team and not self.is_adb():
+                # PC/云游戏: in_team() 不可靠时用 HUD 等待动画结束。
                 logger.info(f'not in team while switching chars_{current_char}_to_{switch_to} {now - start}')
                 # if self.debug:
                 #     self.screenshot(f'not in team while switching chars_{current_char}_to_{switch_to} {now - start}')
@@ -890,6 +902,15 @@ class BaseCombatTask(CombatCheck):
                         f'switch too long failed chars_{current_char}_to_{switch_to}, {now - start}')
                 self.next_frame()
                 continue
+            if self.is_adb() and not in_team:
+                # 安卓端(手游 UI): 切人/intro 动画期间右上角圆形头像和雷达会
+                # 短暂变化, in_android_world() 判定为 False, 但脚本维护的
+                # _android_current_index 是可靠的(发键后立即推进)。此时不能
+                # 因为 HUD 短暂消失就等 5 秒再 raise_not_in_combat —— 那会
+                # 每次切人都中断战斗, 表现为"MuMu 不战斗/打着打着停了"。
+                # 逻辑下标已在发键后推进, 直接走下面 current_index 判定即可。
+                self.log_debug(f'switch_next_char(android): in_team false during animation, '
+                               f'use logical index={current_index}')
             if current_index != switch_to.index:
                 if now - start > 10:
                     if self.debug:

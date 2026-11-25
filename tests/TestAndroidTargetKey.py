@@ -135,5 +135,35 @@ class TestCombatUsesTapTarget(unittest.TestCase):
                                       f'{path}:{no} 未走 tap_target: {line.strip()}')
 
 
+class TestAndroidSwitchNoStuck(unittest.TestCase):
+    """切人卡死修复: 安卓端切人不得依赖 in_team() 的画面判定。
+
+    现象: 切人/intro 动画期间 HUD 圆形头像短暂消失, in_team_android() 返回
+    (False, -1, 1)。旧代码两处用 in_team() 的 current_index, 得到 -1 ->
+    "not in team while switching" 等 5 秒 -> raise_not_in_combat, 每次切人
+    都中断战斗, 表现为"MuMu 打着打着就不打了"。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = inspect.getsource(BaseCombatTask.switch_next_char)
+
+    def test_android_uses_logical_index_at_loop_start(self):
+        self.assertIn("if self.is_adb():", self.src)
+        self.assertIn("self._android_current_index", self.src)
+        self.assertIn("current_index = getattr(self, '_android_current_index', 0)", self.src)
+
+    def test_not_in_team_wait_only_for_non_adb(self):
+        self.assertIn('if not in_team and not self.is_adb():', self.src,
+                      'not in team 的 5 秒等待/raise 只应作用于 PC/云')
+
+    def test_android_index_reassigned_after_key(self):
+        # 发键后推进逻辑下标, 且循环开头/发键后两处都用 getattr 读取逻辑下标
+        self.assertIn('self._android_current_index = switch_to.index', self.src,
+                      '发键后必须推进逻辑下标')
+        self.assertGreaterEqual(self.src.count("getattr(self, '_android_current_index', 0)"), 2,
+                                '循环开头和发键后都必须用逻辑下标覆盖 in_team() 的 -1')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
