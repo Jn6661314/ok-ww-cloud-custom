@@ -27,6 +27,16 @@ CLOUD_LOCK_GOLD_RATIO = 0.02
 CLOUD_RETARGET_INTERVAL = 0.8
 # 串流血条的渐变/压缩会让同一条血条仅约 60% 像素落在颜色范围内。
 CLOUD_HEALTH_BAR_FILL = 0.6
+# 安卓(手游)端谐振破坏检测:
+# PC 的 f_break 模板是 "F" 键帽图标, 手游端提示是触摸图标+文字, 永远匹配不上,
+# 导致 MuMu 从不触发谐振破坏。安卓端改为两层检测:
+#   1. f_break_full(谐振条满的美术图标, 跨端一致)模板, 阈值放宽到 0.85;
+#   2. OCR 在屏幕中央区域找 "破坏/谐振" 提示文字, 记录文字位置。
+# 找到后把 box 存到 _f_break_box, f_break() 直接点击该位置, 不再按 F 键。
+ANDROID_BREAK_OCR_RE = re.compile(r'破坏|谐振')
+ANDROID_BREAK_FULL_THRESHOLD = 0.85
+# OCR 检测区域: 谐振破坏提示出现在屏幕中央偏上, 取中央区域控制 OCR 耗时。
+ANDROID_BREAK_OCR_BOX = (0.2, 0.2, 0.75, 0.75)
 
 
 class CombatCheck(BaseWWTask):
@@ -59,6 +69,7 @@ class CombatCheck(BaseWWTask):
         }
         self.esc_count = 0
         self.can_break = False
+        self._f_break_box = None
 
     def tap_target(self, **kwargs):
         """锁敌: PC/云游戏用鼠标中键; 安卓端(MuMu)用 Y 键。
@@ -107,12 +118,15 @@ class CombatCheck(BaseWWTask):
         self.last_in_realm_not_combat = 0
         self.has_lavitator = False
         self.can_break = False
+        self._f_break_box = None
         self.scene.set_not_in_combat()
         return False
 
     def check_f_break(self):
         if self.can_break:
             return True
+        if self.is_adb():
+            return self._android_check_f_break()
         if self.find_one(Labels.f_break_full, threshold=0.92):
             self.logger.debug('found f_break_full')
             self.can_break = True
@@ -125,12 +139,57 @@ class CombatCheck(BaseWWTask):
                     self.can_break = True
                     return True
 
+    def _android_check_f_break(self):
+        """安卓(MuMu)端谐振破坏检测: 模板找谐振条图标 + OCR 找"破坏"提示文字。
+
+        PC 的 f_break 模板是 F 键帽, 手游端是触摸图标, 模板匹配不到。
+        检测成功时把提示位置存入 _f_break_box, 供 f_break() 点击。
+        OCR 有开销, 限制 1 秒一次; f_break_full 模板便宜, 每次调用都查。
+        """
+        box = self.find_one(Labels.f_break_full, threshold=ANDROID_BREAK_FULL_THRESHOLD)
+        if box is not None:
+            self.logger.debug('android found f_break_full')
+            self._f_break_box = box
+            self.can_break = True
+            return True
+        if self._in_liberation:
+            self._f_break_box = None
+            return False
+        if time.time() - self.last_break_check_time <= 1:
+            return False
+        self.last_break_check_time = time.time()
+        center = self.box_of_screen(*ANDROID_BREAK_OCR_BOX, hcenter=True, vcenter=True,
+                                    name='android_break_ocr')
+        try:
+            matches = self.ocr(box=center, match=ANDROID_BREAK_OCR_RE)
+        except Exception as e:
+            self.logger.debug(f'android f_break ocr failed: {e}')
+            matches = None
+        if matches:
+            self._f_break_box = max(matches, key=lambda b: b.y + b.height / 2)
+            self.logger.debug('android found break prompt by ocr')
+            self.can_break = True
+            return True
+        self._f_break_box = None
+        return False
+
     def f_break(self):
         if self.can_break or self.check_f_break():
             start = time.time()
             while time.time() - start < 0.5 or (time.time() - start < 5 and (self.can_break or self.check_f_break())):
-                self.send_key('f', after_sleep=0.1)
-                self.click(after_sleep=0.1)
+                if self.is_adb():
+                    box = getattr(self, '_f_break_box', None)
+                    if box is not None:
+                        # 手游端必须点击提示图标/文字本身, 按 F 键(或键位映射)没有谐振破坏
+                        x, y = box.center()
+                        self.click(x, y, after_sleep=0.1)
+                    else:
+                        # can_break 被其它路径置位但没有坐标: 尽力而为, 普攻 + F
+                        self.click(after_sleep=0.1)
+                        self.send_key('f', after_sleep=0.1)
+                else:
+                    self.send_key('f', after_sleep=0.1)
+                    self.click(after_sleep=0.1)
                 self.can_break = False
             return True
 

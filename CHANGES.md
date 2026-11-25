@@ -11,6 +11,7 @@
 
 | 版本 | 一句话摘要 |
 | --- | --- |
+| [v1.5.9](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.9) | 修复 MuMu 无法谐振破坏：PC 的 f_break 模板是 F 键帽，手游端是触摸图标永远匹配不上；安卓端改为 f_break_full 谐振条模板（阈值放宽 0.85）+ OCR 识别"破坏/谐振"提示文字，识别到后直接点击提示位置触发，不再按 F 键，PC/云游戏行为不变 |
 | [v1.5.8](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.8) | 修复 MuMu 打着打着停：队伍识别改为按编队 OCR 读 1/2/3 徽章（不再写死 2 人队/1 号位），切人键按键位映射的"切换角色N"自动适配；新增 AutoCombatTask 安卓覆盖层，当前角色为空时重载重试并捕获普通异常，避免触发任务被 TaskExecutor 关闭；安卓血条闪烁加宽限，PC/云游戏行为不变 |
 | [v1.5.7](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.7) | 修复 MuMu 手游端“手动锁敌也不打、角色一动不动”：实际交互层因 `capture=ipc` 回退到 ADBInteraction，`input keyevent` 不触发手游键位映射、无坐标点击又落在屏幕中心空地；安卓战斗中点击改为右下角攻击按钮，模拟器上先把 MuMu 切前台再用 Pynput 发真实键盘触发键位映射（Y 锁敌 / e-q-r 技能 / WASD 走位），PC/云游戏/真机行为不变 |
 | [v1.5.6](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.6) | 修复 MuMu 自动战斗启动即报错停止：战斗跑起来后漂泊者重击连招调用 `mouse_down()`，但上游 ADBInteraction 没有该方法抛 AttributeError；在 BaseWWTask 覆盖 `mouse_down/mouse_up`，安卓端用 nemu 触摸长按（无通道降级为点击），PC/云游戏行为不变 |
