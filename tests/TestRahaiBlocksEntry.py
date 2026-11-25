@@ -137,7 +137,7 @@ class TestStartAndPlay(unittest.TestCase):
         task.click = lambda *args, **kwargs: clicks.append(args)
         button_state = {'count': 0}
 
-        def challenge_button():
+        def challenge_button(wide=False):
             button_state['count'] += 1
             if button_state['count'] <= 1:
                 return [SimpleNamespace(name='开始挑战', x=1700, y=1010)]
@@ -165,7 +165,7 @@ class TestStartAndPlay(unittest.TestCase):
     def test_raises_when_start_button_missing(self):
         task = make_task()
         task._ocr_results = [[SimpleNamespace(name='关卡目标')]]
-        task._challenge_button = lambda: None
+        task._challenge_button = lambda wide=False: None
         with self.assertRaises(ChallengeFailed):
             task._start_and_play(object(), '简单', '测试 · 简单')
 

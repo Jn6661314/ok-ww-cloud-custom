@@ -12,6 +12,7 @@
 import os
 import re
 import sys
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
@@ -309,6 +310,123 @@ class TestChallengeButtonWide(unittest.TestCase):
         task = make_rahai()
         task._ocr_results = [[], []]
         self.assertIsNone(task._challenge_button(wide=True))
+
+
+class TestFallbackDirectStart(unittest.TestCase):
+    """v1.5.19: 难度+无尽特征 OCR 全失败时, 有开始按钮就直接开始(实测 18:28
+    无尽详情页读不到任何特征, 旧逻辑误点 X 退出页面)。"""
+
+    def test_fallback_starts_with_button(self):
+        task = make_rahai()
+        task._event_title = lambda: [box('拉海洛方块·逆转')]
+        task._ocr_results = [
+            [],  # narrow 困难
+            [],  # narrow 简单
+            [],  # wide 困难
+            [],  # wide 简单
+            [],  # _endless_page 三个区域都读不到
+            [], [],
+            [box('开始挑战', y=1010)],  # _challenge_button narrow
+        ]
+        started = []
+        task._start_and_play = lambda interaction, difficulty, label, check_objective=True: \
+            started.append((difficulty, check_objective))
+        task._challenge_current_details(object())
+        self.assertEqual(len(started), 1, '有开始按钮必须兜底直启')
+        self.assertEqual(started[0][0], '未知')
+        self.assertFalse(started[0][1], '兜底直启必须跳过积分/奖章目标检查')
+
+    def test_no_button_still_raises(self):
+        task = make_rahai()
+        task._event_title = lambda: []
+        task._ocr_results = [[], [], [], [], [], [], [], []]
+        with self.assertRaises(ChallengeFailed):
+            task._challenge_current_details(object())
+
+
+class TestStartAndPlayEndlessRedirect(unittest.TestCase):
+    """v1.5.19: 兜底直启点开始后实际进入无尽模式 -> 自动转无尽流程。"""
+
+    def test_redirect_to_endless(self):
+        task = make_rahai()
+        task._event_title = lambda: [box('拉海洛方块·逆转')]
+        # _start_and_play 内部: 积分检查跳过(check_objective=False)
+        buttons = [box('开始挑战', y=1010), None]  # 点击后按钮消失
+        task._challenge_button = lambda wide=False: buttons.pop(0)
+        task._endless_page = lambda: False
+        task._endless_ingame = lambda: True  # 点开始后检测到无尽局内特征
+        played = []
+        task._play_endless_round = lambda interaction: played.append(True)
+        task.next_frame = lambda: None
+        task._start_and_play(object(), '未知', '兜底', check_objective=False)
+        self.assertEqual(played, [True], '进入无尽特征界面必须转 _play_endless_round')
+
+    def test_normal_board_still_works(self):
+        task = make_rahai()
+        task._event_title = lambda: []
+        buttons = [box('开始挑战', y=1010), None]
+        task._challenge_button = lambda wide=False: buttons.pop(0)
+        task._endless_page = lambda: False
+        task._endless_ingame = lambda: False
+        played = []
+        task._play_board = lambda interaction, **kw: played.append(('normal', kw))
+        task._ready_board = lambda: [box('board')]
+        task._stage_details = lambda: [box('关卡目标')]  # 普通尾部: 领奖后回到详情页
+        task.next_frame = lambda: None
+        task._clickable = lambda interaction: True
+        task._start_and_play(object(), '困难', '测试', check_objective=False)
+        self.assertEqual(played, [('normal', {})], '普通关卡必须走普通棋盘流程')
+
+
+class TestRunInLoopTimeout(unittest.TestCase):
+    """v1.5.19: run_in_loop 超时保护 —— 云游戏浏览器卡顿时 CDP 调用不再永久阻塞。"""
+
+    def _make_capture(self):
+        import asyncio
+        import threading
+        from ok.device.capture_methods.browser import BrowserCaptureMethod
+        cap = BrowserCaptureMethod.__new__(BrowserCaptureMethod)
+        cap.loop = asyncio.new_event_loop()
+        t = threading.Thread(target=cap.loop.run_forever, daemon=True)
+        t.start()
+        return cap
+
+    def test_normal_call_returns(self):
+        import asyncio
+        cap = self._make_capture()
+
+        async def ok_coro():
+            await asyncio.sleep(0.01)
+            return 42
+
+        self.assertEqual(cap.run_in_loop(ok_coro(), timeout=2), 42)
+        cap.loop.call_soon_threadsafe(cap.loop.stop)
+
+    def test_hang_call_times_out(self):
+        import asyncio
+        cap = self._make_capture()
+        started = asyncio.Event()
+
+        async def stuck():
+            started.set()
+            await asyncio.sleep(60)  # 模拟浏览器假死
+
+        t0 = time.time()
+        result = cap.run_in_loop(stuck(), timeout=0.3)
+        elapsed = time.time() - t0
+        self.assertIsNone(result, '超时必须返回 None 而不是永久阻塞')
+        self.assertLess(elapsed, 5, '必须在超时后及时返回')
+        cap.loop.call_soon_threadsafe(cap.loop.stop)
+
+    def test_exception_logged_not_raised(self):
+        import asyncio
+        cap = self._make_capture()
+
+        async def boom():
+            raise ValueError('boom')
+
+        self.assertIsNone(cap.run_in_loop(boom(), timeout=2))
+        cap.loop.call_soon_threadsafe(cap.loop.stop)
 
 
 class TestChallengeEndless(unittest.TestCase):

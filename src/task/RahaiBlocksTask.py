@@ -226,11 +226,16 @@ class RahaiBlocksTask(BaseTask):
         self._start_and_play(interaction, difficulty, f"{title.name} · {difficulty}")
         self.log_info(f"已通关：{title.name} · {difficulty}")
 
-    def _start_and_play(self, interaction, difficulty, label):
-        """在关卡详情页上开始当前选中难度并下完这一局(原 _challenge 尾部公共流程)。"""
-        if not self.ocr(.68, .48, .88, .55, match=re.compile(r"积分|奖章")):
+    def _start_and_play(self, interaction, difficulty, label, check_objective=True):
+        """在关卡详情页上开始当前选中难度并下完这一局(原 _challenge 尾部公共流程)。
+
+        v1.5.19: check_objective=False 供难度识别全失败时的兜底直启(无尽详情页
+        OCR 读不到特征文字, 也没有积分/奖章目标可查); 点开始后若实际进入的是
+        无尽模式(弹窗/局内特征), 自动转无尽对局流程。
+        """
+        if check_objective and not self.ocr(.68, .48, .88, .55, match=re.compile(r"积分|奖章")):
             raise ChallengeFailed("无法识别关卡目标。")
-        start = self._challenge_button()
+        start = self._challenge_button(wide=(difficulty == "未知"))
         if not start:
             raise ChallengeFailed("无法识别开始挑战按钮。")
 
@@ -238,12 +243,18 @@ class RahaiBlocksTask(BaseTask):
         for _ in range(2):
             self.click(start, down_time=.09, after_sleep=1.3)
             self.next_frame()
-            start = self._challenge_button()
+            start = self._challenge_button(wide=(difficulty == "未知"))
             if not start:
                 break
         else:
             raise ChallengeFailed("开始挑战按钮未响应。")
         try:
+            self.next_frame()
+            if self._endless_page() or self._endless_ingame():
+                # 兜底直启进入了无尽模式 -> 转无尽对局流程(含弹窗/结算处理)
+                self.log_info("进入的是无尽模式，转无尽对局流程。")
+                self._play_endless_round(interaction)
+                return
             if not self.wait_until(self._ready_board, time_out=15):
                 raise ChallengeFailed("无法识别棋盘。")
             self._play_board(interaction)
@@ -280,6 +291,16 @@ class RahaiBlocksTask(BaseTask):
             if self._endless_page():
                 self._challenge_endless(interaction)
                 return
+            # v1.5.19: 无尽详情页可能 OCR 读不到任何特征文字(实测 18:28 直启
+            # 失败后误点 X 退出页面)。此时只要页面上有开始按钮就直接开始:
+            # 无尽没有难度选项; 普通关卡按当前选中难度开打(与宽域兜底"按当前
+            # 选中难度继续"策略一致), 进入后再按实际界面分流(见 _start_and_play)。
+            if self._challenge_button(wide=True):
+                self.log_warning("未能识别难度页签，按页面当前选中难度直接开始。")
+                self._start_and_play(interaction, "未知",
+                                     "关卡页面直接开始 · 当前选中难度",
+                                     check_objective=False)
+                return
             raise ChallengeFailed("无法识别关卡页面当前选中的难度。")
         self._start_and_play(interaction, difficulty, f"关卡页面直接开始 · {difficulty}")
 
@@ -299,6 +320,31 @@ class RahaiBlocksTask(BaseTask):
                 return int(m.group(0))
         return None
 
+    def _click_start(self, wide=True):
+        """点击开始按钮直到按钮消失(进入下一界面)。返回是否成功。"""
+        start = self._challenge_button(wide=wide)
+        if not start:
+            return False
+        for _ in range(2):
+            self.click(start, down_time=.09, after_sleep=1.3)
+            self.next_frame()
+            start = self._challenge_button(wide=wide)
+            if not start:
+                return True
+        return False
+
+    def _play_endless_round(self, interaction):
+        """无尽对局: 处理玩法弹窗后打完本局; 达标退出结算/无落点自动结算。"""
+        if not self.wait_until(self._ready_board, time_out=15):
+            raise ChallengeFailed("无法识别无尽模式棋盘。")
+        reason = self._play_board(interaction, endless=True, max_moves=600)
+        self.log_info(f"无尽模式本局结束（{reason}）。")
+        if reason in ('goal', 'cap'):
+            self._endless_exit_and_settle()
+        elif self.wait_until(self._reward, time_out=3):
+            # 失败/无落点后游戏自动结算: 点掉奖励弹窗
+            self.click(.5, .88, after_sleep=.8)
+
     def _challenge_endless(self, interaction):
         """无尽模式: 从无尽页面开始, 或加入已在进行中的对局。
 
@@ -312,27 +358,10 @@ class RahaiBlocksTask(BaseTask):
         if self._playable_board():
             self.log_info("检测到无尽模式对局，直接加入继续游玩。")
         else:
-            start = self._challenge_button(wide=True)
-            if not start:
+            if not self._click_start():
                 raise ChallengeFailed("无法识别无尽模式的开始按钮。")
             self.log_info("开始挑战：无尽模式")
-            for _ in range(2):
-                self.click(start, down_time=.09, after_sleep=1.3)
-                self.next_frame()
-                start = self._challenge_button(wide=True)
-                if not start:
-                    break
-            else:
-                raise ChallengeFailed("开始挑战按钮未响应。")
-            if not self.wait_until(self._ready_board, time_out=15):
-                raise ChallengeFailed("无法识别无尽模式棋盘。")
-        reason = self._play_board(interaction, endless=True, max_moves=600)
-        self.log_info(f"无尽模式本局结束（{reason}）。")
-        if reason in ('goal', 'cap'):
-            self._endless_exit_and_settle()
-        elif self.wait_until(self._reward, time_out=3):
-            # 失败/无落点后游戏自动结算: 点掉奖励弹窗
-            self.click(.5, .88, after_sleep=.8)
+        self._play_endless_round(interaction)
 
     def _endless_exit_and_settle(self):
         """达到分数目标后主动退出无尽模式并结算领取奖励。"""

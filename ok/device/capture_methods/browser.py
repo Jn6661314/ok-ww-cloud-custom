@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import ctypes
 import os
 import re
@@ -168,11 +169,18 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    def run_in_loop(self, coro):
+    def run_in_loop(self, coro, timeout=15):
         if self.loop.is_running():
             future = asyncio.run_coroutine_threadsafe(coro, self.loop)
             try:
-                return future.result()
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                # v1.5.19: 云游戏浏览器卡顿/假死时 CDP 调用可能永久阻塞,
+                # 导致任务静默卡死(实测 71 秒无任何日志)。超时后取消调用并
+                # 放行, 让上层重试; 被卡协程会在下一个 await 点被取消。
+                future.cancel()
+                logger.warning(f"Playwright 调用超时({timeout}秒)，已取消并继续。"
+                               f"云游戏浏览器可能卡顿，若频繁出现请检查浏览器窗口状态。")
             except Exception as e:
                 logger.error(f"Playwright execution error: {e}")
         return None
