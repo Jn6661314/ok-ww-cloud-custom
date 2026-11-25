@@ -417,6 +417,48 @@ class BaseWWTask(BaseTask):
         return super().click(x, y, move_back, name, interval, move=move, down_time=down_time, after_sleep=after_sleep,
                              key=key)
 
+    def mouse_down(self, x=-1, y=-1, name=None, key="left"):
+        """安卓端(ADB)长按普攻: 上游 ADBInteraction 没有 mouse_down, 直接调会抛
+        AttributeError 让自动战斗中断(实测 Rover 重击连招 mouse_down 崩溃)。
+        手游普攻靠点屏幕中心(见本类 click() 的 -1,-1 处理), 长按用 nemu 触摸 down/up。
+        PC/云游戏仍走上游实现, 行为不变。
+        """
+        if not self.is_adb():
+            return super().mouse_down(x, y, name=name, key=key)
+        if x == -1 and y == -1:
+            x = self.width_of_screen(0.5)
+            y = self.height_of_screen(0.5)
+        interaction = getattr(self.executor, 'interaction', None)
+        capture = getattr(interaction, 'capture', None)
+        nemu_impl = getattr(capture, 'nemu_impl', None)
+        if nemu_impl is not None:
+            try:
+                nemu_impl.down(int(x), int(y))
+                self._adb_mouse_down_xy = (int(x), int(y))
+                return
+            except Exception as e:
+                logger.warning(f'adb mouse_down via nemu failed: {e}')
+        # 兜底: 无 nemu 通道时降级为一次普通点击, 至少保证战斗循环不崩溃中断
+        try:
+            self.click(x, y, name=name, key=key)
+        except Exception as e:
+            logger.warning(f'adb mouse_down fallback click failed: {e}')
+
+    def mouse_up(self, name=None, key="left"):
+        """安卓端(ADB)结束长按, 对应 mouse_down 的 nemu 触摸抬起。"""
+        if not self.is_adb():
+            return super().mouse_up(name=name, key=key)
+        interaction = getattr(self.executor, 'interaction', None)
+        capture = getattr(interaction, 'capture', None)
+        nemu_impl = getattr(capture, 'nemu_impl', None)
+        if nemu_impl is not None and getattr(self, '_adb_mouse_down_xy', None):
+            try:
+                nemu_impl.up()
+            except Exception as e:
+                logger.warning(f'adb mouse_up via nemu failed: {e}')
+            finally:
+                self._adb_mouse_down_xy = None
+
     def check_for_monthly_card(self):
         if self.should_check_monthly_card():
             start = time.time()
