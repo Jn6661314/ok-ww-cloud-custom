@@ -281,5 +281,57 @@ class ReturnToListTest(unittest.TestCase):
             task._return_to_list()
 
 
+class MumuInteractionTest(unittest.TestCase):
+    """MuMu/安卓模拟器：仍是 Windows 窗口，走 Pynput 真实键鼠触发模拟器键位映射。"""
+
+    def test_adb_uses_pynput_interaction(self):
+        task = make_task()
+        task.is_browser = Mock(return_value=False)
+        task.is_adb = Mock(return_value=True)
+        task._executor.device_manager.capture_method = 'windows'
+        task._executor.device_manager.hwnd_window = object()
+        with patch('src.task.RahaiBlocksTask.PynputInteraction') as pynput:
+            self.assertIs(task._make_interaction(), pynput.return_value)
+        self.assertEqual(pynput.call_args[0][0], 'windows')
+
+    def test_adb_clickable_follows_window_focus(self):
+        task = make_task()
+        task.is_browser = Mock(return_value=False)
+        task.is_adb = Mock(return_value=True)
+        interaction = Mock()
+        interaction.clickable = Mock(return_value=False)
+        self.assertFalse(task._clickable(interaction))
+        interaction.clickable = Mock(return_value=True)
+        self.assertTrue(task._clickable(interaction))
+
+    def test_adb_return_to_list_falls_back_to_back_key(self):
+        task = make_task([])
+        task.is_adb = Mock(return_value=True)
+        task._stage_details = Mock(return_value=False)
+        # 第一次找列表失败 -> 发返回键 -> 第二次找到
+        calls = {'n': 0}
+        stages = [('title', 'status')]
+
+        def stage_list():
+            calls['n'] += 1
+            return [] if calls['n'] == 1 else stages
+
+        task._stage_list = Mock(side_effect=stage_list)
+        task.send_key = Mock()
+        self.assertEqual(task._return_to_list(), stages)
+        task.send_key.assert_called_once()
+        self.assertEqual(task.send_key.call_args[0][0], 'esc')
+
+    def test_pc_return_to_list_does_not_send_key(self):
+        task = make_task([])
+        task.is_adb = Mock(return_value=False)
+        task._stage_details = Mock(return_value=False)
+        task._stage_list = Mock(return_value=[])
+        task.send_key = Mock()
+        with self.assertRaises(RuntimeError):
+            task._return_to_list()
+        task.send_key.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

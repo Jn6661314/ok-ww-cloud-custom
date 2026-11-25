@@ -68,6 +68,9 @@ def executor_for(tasks, folder='configs'):
         config_folder=folder, get_all_tasks=lambda: tasks,
         onetime_tasks=[task for task in tasks if not isinstance(task, ExampleTrigger)],
         get_task_by_class=lambda cls: next((task for task in tasks if isinstance(task, cls)), None),
+        # BaseWWTask.is_adb()/is_browser() 会经 device_manager 取当前设备；
+        # 没有设备时返回 None 即表示"非安卓/非云游戏"分支。
+        device_manager=SimpleNamespace(get_preferred_device=lambda: None),
     )
 
 

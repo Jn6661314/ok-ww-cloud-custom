@@ -30,7 +30,7 @@ class RahaiBlocksTask(BaseTask):
         self.description = (
             "从活动关卡列表、任一关卡详情页或无尽模式页面开始，挑战所有已解锁且未通关的关卡。"
             "支持无尽模式：从无尽页面直接开始或加入进行中的对局，达到目标分数后自动退出结算。"
-            "支持简体中文 PC 客户端与云鸣潮。"
+            "支持简体中文 PC 客户端、云鸣潮与 MuMu/安卓模拟器。"
         )
         self.group_name = "Daily Activities"
         self.group_icon = task_icon("category-daily")
@@ -39,6 +39,13 @@ class RahaiBlocksTask(BaseTask):
     # --- 输入层：云鸣潮用浏览器虚拟输入，PC 客户端用真实鼠标 -------------------
 
     def _make_interaction(self):
+        """按设备选输入通道。
+
+        - 云鸣潮: BrowserInteraction(CDP 虚拟输入), 不依赖窗口焦点
+        - MuMu/安卓模拟器: 仍是 Windows 窗口, 用 PynputInteraction 向模拟器窗口
+          发真实键盘/鼠标事件, 由 MuMu 自己的键位映射转成触屏操作(和 PC 同一条路径)
+        - PC 客户端: 同上
+        """
         capture = self.executor.device_manager.capture_method
         if self.is_browser():
             return BrowserInteraction(capture)
@@ -166,6 +173,15 @@ class RahaiBlocksTask(BaseTask):
             self.log_info("退回了活动主页，点击「立即前往」返回关卡列表。")
             self.click(go_now[0], after_sleep=.8)
         stages = self.wait_until(self._stage_list, time_out=5)
+        if not stages and self.is_adb():
+            # 手游端右上角 X 的坐标与 PC 不同, 可能关不掉详情页;
+            # 用返回键(模拟器键位映射里 esc -> 返回/菜单)兜底。
+            self.log_info("手游端返回关卡列表失败，尝试安卓返回键。")
+            self.send_key('esc', after_sleep=.8)
+            go_now = self.wait_until(self._go_now_button, time_out=2)
+            if go_now:
+                self.click(go_now[0], after_sleep=.8)
+            stages = self.wait_until(self._stage_list, time_out=5)
         if not stages:
             raise RuntimeError("挑战结束后无法返回关卡列表。")
         return stages
@@ -332,8 +348,9 @@ class RahaiBlocksTask(BaseTask):
         self.next_frame()
         if canonical_frame(self.frame) is None:
             raise RuntimeError("拉海洛方块需要 16:9 的游戏画面（PC 客户端或云鸣潮 1920x1080）。")
-        # 云鸣潮没有 PC 客户端的窗口句柄，只在本地客户端检查。
-        if not self.is_browser() and (not self.hwnd or not self.hwnd.exists):
+        # 云鸣潮没有 PC 客户端的窗口句柄，只在本地客户端/模拟器上检查。
+        # MuMu 等模拟器本身就是 Windows 窗口，句柄存在即可(前台要求由 _clickable 保证)。
+        if not (self.is_browser() or self.is_adb()) and (not self.hwnd or not self.hwnd.exists):
             raise RuntimeError("拉海洛方块需要处于前台的 Windows PC 客户端。")
 
         stages = self.wait_until(self._stage_list, time_out=5)

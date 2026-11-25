@@ -39,7 +39,7 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
 5. 脚本自动完成：把全部定制文件复制到 working 与 repo 两个目录、放入工坊离线缓存，
    并把被改文件备份为 .pre-cloud 后缀。请勿手动改动 Cookie、MultiAccountConfig.json、
    自定义队伍文件。
-   脚本结束会打印 "Done: 15 file copies across 2 directories."，请确认这一行出现。
+   脚本结束会打印 "Done: 29 file copies across 2 directories."，请确认这一行出现。
 6. 启动 ok-ww，做三项确认：
    a. 设备下拉里选「云游戏」，任务列表里**仍然只有一个日常任务**和一个多账号任务
       （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类
@@ -48,14 +48,17 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    b. 设置里能看到「Enable Blur」，选中后云游戏界面右下角 UID 被模糊/图案覆盖
       （可切换 Blur / Inpaint）。
    c. 「角色代码」页（含工坊）存在。
+   d. MuMu/安卓：设备下拉里选模拟器后，设置页能看到「MuMu/安卓 Config」（可手填编队），
+      抓屏方式默认为 MuMu IPC；拉海洛方块任务在该设备下也能启动。
 7. 如果之后官方更新把补丁覆盖了：关闭 ok-ww 后运行 python restore.py 或双击
    一键恢复.bat；大版本结构变化则重跑第 4 步的安装脚本。详见 docs/backup-and-restore.md。
 
 【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
    a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是
       更老的官方版（如 v3.8.14），先让用户把官方 ok-ww 更新到 v3.8.15 再装补丁。
-   b. 确认装齐 15 个文件：working/src/task/MultiAccountDailyTask.py、
-      working/src/cloud_browser.py、working/config.py 等是否存在且内容较新。
+   b. 确认装齐 29 个文件：working/src/task/MultiAccountDailyTask.py、
+      working/src/cloud_browser.py、working/src/task/BaseWWTask.py、
+      working/ok/device/DeviceManager.py、working/config.py 等是否存在且内容较新。
    c. 「保存登录状态 / 切换账号」只在设备选「云游戏」时出现——选成 PC 或安卓时不显示，
       这是设计行为，不是 bug。
    d. UID 遮罩由框架的 blur 机制实现，需要在设置里勾选「Enable Blur」（默认 Inpaint）。
@@ -63,8 +66,12 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    e. 查日志：%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/working/logs/ok-script.log，
       搜 ERROR / playwright / cloud。
 
-   注意：本补丁只做云鸣潮（浏览器）适配，**不含 MuMu / 安卓模拟器定制**。
-   安卓相关定制完整保留在仓库的 legacy-mumu-v1.5.21 分支，不要在本分支上排查 adb 问题。
+   f. 如果用户报"模拟器不在设备列表 / MuMu 没画面 / 不打架"：
+      - 先在 MuMu 里把鸣潮启动起来，设备下拉才会扫到 adb 设备；
+      - 抓屏方式选 MuMu IPC；若窗口被最小化或开了「后台保活」，IPC 会持续黑屏
+        （日志里是"MuMu 抓屏返回空画面"）；
+      - 战斗识别乱切人：让用户在「设置 → MuMu/安卓 Config → MuMu 编队」手填编队；
+      - 按键无反应：手游不认 input keyevent，必须保留模拟器的键位映射，不要改成纯 ADB 输入。
 
 请逐步执行并汇报结果。遇到报错先自行排查修复（比如路径、Python 版本、文件占用），
 不要停下来问我，除非确实需要我提供安装路径或登录凭据。完成后告诉我可以开始使用。

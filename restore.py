@@ -28,13 +28,22 @@ DEFAULT_BASE = (Path.home() / 'AppData' / 'Local' / 'ok-ww'
                 / 'data' / 'apps' / 'ok-ww')
 
 # 我们改动/新增的全部文件（相对 working / repo 根目录）
-# 基线：官方 ok-ww v3.8.15（ok-script 3.0.14）。只保留云端（云鸣潮）相关的
-# 定制 + 少量通用修复；MuMu/安卓相关改动在 legacy-mumu-v1.5.21 分支上，未合并。
+# 基线：官方 ok-ww v3.8.15（ok-script 3.0.14）。包含云端（云鸣潮）与
+# MuMu/安卓模拟器两套定制；纯云端、可直接向上游提 PR 的版本在 official-cloud 分支。
 RELATIVE_FILES = [
     'config.py',
     # 框架最小补丁：CDP 调用超时（防云游戏假死卡住任务）+ 后台输入。
-    # 其余框架改动已全部回退，避免与官方 ok-script 分叉。
     'ok/device/capture_methods/browser.py',
+    # 框架 MuMu/ADB 补丁（本地模拟器支持），官方合入后即可删除：
+    # - DeviceManager: adb 拉起游戏 / MuMu 网桥 arp 回退 / 窗口抓屏下的交互覆盖
+    # - nemu_ipc: MuMu IPC 抓屏的全黑帧检测与连接自恢复
+    # - keys: ADB 键位映射（esc->返回、F1-F12、A-Z、0-9、反引号）
+    # - window / windows_graphics: WGC 在 Win10 2004+ 可用、去黄色边框
+    'ok/device/DeviceManager.py',
+    'ok/device/capture_methods/nemu_ipc.py',
+    'ok/device/capture_methods/windows_graphics.py',
+    'ok/device/interaction_methods/keys.py',
+    'ok/util/window.py',
     # 云鸣潮：每个账号一个浏览器 profile（纯 okww 侧目录切换，不改框架）
     'src/cloud_browser.py',
     'src/cloud_recovery.py',
@@ -43,9 +52,22 @@ RELATIVE_FILES = [
     'src/task/account/MultiAccountConfigStore.py',
     'src/gui/MultiAccountConfigTab.py',
     'src/gui/MultiAccountConfigDialog.py',
-    # 云鸣潮适配：活跃度读不到时不按 0 处理；先约电台在浏览器下不吞 Alt
+    # 云鸣潮/MuMu 适配：活跃度读不到时不按 0 处理；先约电台在浏览器下不吞 Alt；
+    # 安卓端改用"活跃行迹"宽域 OCR 读活跃度
     'src/task/DailyTask.py',
-    # 官方 v3.8.15 的拉海洛方块（未含无尽模式）；搜索预算修复在 rahai_blocks.py
+    # MuMu/安卓：触屏键位、大世界判定、索拉指南定位、独立每日任务入口
+    'src/task/touch_mode.py',
+    'src/task/android_world.py',
+    'src/task/android_book.py',
+    'src/task/AndroidDailyTask.py',
+    # MuMu/安卓：BaseWWTask 的触屏语义层 + BaseCombatTask 的编队锁定/切人键位
+    # + CombatCheck 的锁敌/谐振破坏 + 触发任务与鼠标复位的健壮性修复
+    'src/task/BaseWWTask.py',
+    'src/task/BaseCombatTask.py',
+    'src/combat/CombatCheck.py',
+    'src/task/AutoCombatTask.py',
+    'src/task/MouseResetTask.py',
+    # 拉海洛方块：官方 v3.8.15 + 无尽模式/详情页直启 + 云鸣潮/MuMu 输入分流
     'src/task/RahaiBlocksTask.py',
     'src/task/rahai_blocks.py',
     # 爱弥斯：变奏入场就输出（上游要求双队友满协奏退场, 实战几乎不成立）
@@ -143,9 +165,11 @@ def main(argv=None) -> int:
             return 1
 
     print('')
-    print('恢复完成。请启动 ok-ww，选设备「云游戏」后照常运行日常/多账号任务；')
-    print('多账号任务的设置页在云设备下会多出「保存登录状态」「切换账号」两个按钮。')
-    print('账号 Cookie（cloud_profiles）和任务配置（configs）未改动，无需重新配置。')
+    print('恢复完成。启动 ok-ww 后按设备照常运行同一个「每日任务」即可：')
+    print('  - 云游戏：多账号任务设置页会多出「保存登录状态」「切换账号」两个按钮')
+    print('  - MuMu/安卓：设备下拉里会出现模拟器，抓屏默认 MuMu IPC，键位由模拟器映射转发')
+    print('  - PC 客户端：行为与官方一致')
+    print('账号 Cookie（cloud_profiles）、多账号配置和任务配置（configs）未改动，无需重新配置。')
     return 0
 
 

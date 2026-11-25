@@ -162,6 +162,17 @@ monthly_card_config_option = ConfigOption('Monthly Card Config', {
     'Monthly Card Time': 'Your computer\'s local time when the monthly card will popup, hour in (1-24)'
 })
 
+# MuMu/安卓编队配置: 手游右上角是圆形头像(比 PC 头像大约 1.7 倍), PC 头像模板
+# 直接固定尺度匹配必然弱匹配(实测 0.62~0.79 抖动), 队伍身份每帧都在漂 ->
+# 奶妈/主C/副C 类型乱变, 切人优先级全乱。除了缩放匹配+投票锁定外,
+# 允许用户直接手填编队(最高优先级, 完全不做画面识别 —— "编队为准")。
+android_config_option = ConfigOption('MuMu/安卓 Config', {
+    'MuMu 编队': '',
+}, description='MuMu/安卓编队(可选, 编队为准): 逗号分隔的角色名, 按编队槽位顺序, 如 绯雪,漂泊者·衍射,渊武 或 Hiyuki,Rover: Spectro,Yuanwu',
+    config_description={
+        'MuMu 编队': 'MuMu/安卓编队角色名, 逗号分隔, 按编队槽位顺序填写; 支持中文名或英文名。填写后安卓端完全按此编队战斗, 不做画面识别; 留空则自动识别并锁定',
+    }, show_at_tab=True, icon=Icon.PEOPLE)
+
 config = {
     'debug': False,  # Optional, default: False
     'custom_tasks': True,
@@ -188,7 +199,8 @@ config = {
     'custom_tabs': [
         ["src.gui.CharacterCodeTab", "CharacterCodeTab"],
     ],
-    'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option],
+    'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option,
+                       android_config_option],
     'ocr': {
         'lib': 'onnxocr',
         'auto_simplify': True,
@@ -233,6 +245,14 @@ config = {
         'check_auto_hdr': True,
         'check_night_light': True,
         'force_no_night_light': False,
+    },
+    # 本地安卓模拟器入口（MuMu/雷电等）：ADB 设备会出现在设备选择列表。
+    # 抓屏默认走 MuMu IPC（快, 且支持长按重击）；非 MuMu 模拟器没有 ipc 通道时,
+    # 框架会自动回退到 adb 抓屏。输入走 ADBInteraction + 真实键盘事件叠加
+    # （见 BaseWWTask.send_key）：手游不认 input keyevent, 必须由模拟器键位映射转发。
+    'adb': {
+        'packages': ['com.kurogame.mingchao', 'com.kurogame.wutheringwaves'],
+        'capture_method': 'ipc',
     },
     'browser': {
         'url': 'https://mc.kurogames.com/cloud/#/',
@@ -288,6 +308,9 @@ config = {
     'launcher_error_log_file': 'logs/launcher_error.log',
     'version': version,
     'onetime_tasks': [  # tasks to execute
+        # 日常任务只注册一次: DailyTask 会按所选设备(PC/云鸣潮/MuMu)自动切换操作方式。
+        # MuMu 专用入口 src/task/AndroidDailyTask.py 保留给"想显式确认设备"的用户,
+        # 默认不注册, 避免任务列表里出现两个每日任务。
         ["src.task.DailyTask", "DailyTask"],
         ["src.task.GalGameTask", "GalGameTask"],
         ["src.task.RahaiBlocksTask", "RahaiBlocksTask"],
