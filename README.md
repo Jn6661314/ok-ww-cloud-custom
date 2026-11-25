@@ -8,6 +8,7 @@
 
 ### 2026-11-25
 
+- **[v1.8.3](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.3)** — **堵死「启动一次就丢定制」的第二条路径**：v1.8.2 把定制提交进 git 后，又打开一次官方启动器，22 个已跟踪文件仍被整体刷回官方（`config.py` 17430→13380 字节）。reflog 揭穿真相：启动器不是比对工作区，而是拿 `app.json` 的 `current_version`（`v3.8.15`）找**同名 git tag** 再 `git checkout -f` —— tag 指向官方提交时，`-f` 直接覆盖工作区，定制提交只是"当时的 HEAD"、一秒钟被甩掉。`restore.py` 现在把版本 tag 本身（`v3.8.15`）指到定制提交（原官方指向备份为 `official-v3.8.15`），此后启动器的 checkout 切出来的就是定制树；已实测 checkout 后仍是定制版、重复运行幂等，`tests/TestRestoreGitSync.py` 8→13 项，全量 239 项通过。
 - **[v1.8.2](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.2)** — **修掉「本地版本显示 3.8.14」**：代码基线早就是 v3.8.15（`config.py::version`、启动日志、应用内「关于」页都是 3.8.15），但**启动器**（ok-ww.exe）读的是 `data/apps/ok-ww/app.json` 里的 `current_version`，那里还留着装 3.8.14 时的值。除了显示不对，它还让启动器以为"可以更新到 3.8.15" —— **一旦点更新，官方代码会覆盖 `working`/`repo`，整套定制全丢**。现在 `restore.py` 每次部署都会把 `app.json.current_version` 对齐到 `config.py::version`（改前自动备份 `app.json.<时间戳>.bak`），9 项单测覆盖（版本不同改写、相同不动、无文件/坏 JSON 安全跳过）。
 - **[v1.8.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.1)** — **修正远控/串流窗口的入口位置说明**：它是左侧导航栏「游戏」分组里的独立页（图标=显示器），**不在「设置」页里**（`show_at_tab` 配置项会被设置页主动跳过），此前文档写的「设置 → …」让人找不到；同时修掉配置名含 `/` 导致配置被写成 `configs/远控/串流窗口.json` 子目录的问题（改为 `远控串流窗口(试验性)`，文件落回 `configs/` 根下），`MuMu/安卓 Config` 一并改为 `MuMu 安卓 Config`，并加单测禁止全局配置名再出现斜杠。
 - **[v1.8.0](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.0)** — **试验性支持把远控 / 串流软件窗口当 PC 设备**（UU远程、ToDesk、向日葵、Parsec、Moonlight）：设置里「远控/串流窗口(试验性)」填窗口标题关键字，设备下拉即出现该窗口，走 windows 抓屏 + Pynput 真实键鼠，与 PC 客户端同一条链路；启动时校验客户区 16:9 并禁用自动 resize，比例不对会给出实际尺寸与修正建议。附带完整的硬性要求（被控电脑游戏全屏 16:9、远控画质原画、窗口前台、管理员运行、鼠标绝对定位）。
@@ -278,6 +279,24 @@ ok-ww 自带更新会还原 `working` 和 `repo` 中的文件。两种恢复方�
 - **重新打补丁**（大版本升级后结构变化）：按上面"安装"步骤运行 `install_to_local_app.py`。
 
 两种都不会动账号 Cookie 和任务配置。详见 [`docs/backup-and-restore.md`](docs/backup-and-restore.md)。
+
+### 为什么现在启动器不会再刷掉定制（v1.8.3）
+
+启动器（pyappify）启动/自修复时的动作是：读 `app.json` 的 `current_version`（如 `v3.8.15`）→
+在 `repo` 里找**同名 git tag** → `git checkout -f <tag>`。`-f` 会丢弃工作区里所有未提交改动，
+所以：
+
+- 只把定制写成文件（不提交）→ 一次启动就没了；
+- 只把定制**提交**成 HEAD（v1.8.2 的做法）→ tag 还指向官方提交，`checkout -f` 照样切回官方；
+- 把**版本 tag 本身**指到定制提交（v1.8.3 的做法）→ 同一次 checkout 切出来的就是定制树。
+
+`restore.py` 每次部署会依次做：写文件 → 提交进 git（`local-custom-baseline`）→ 把 `v<版本号>` tag
+钉到该提交（原官方指向备份成 `official-v<版本号>`）→ 自检。
+
+想临时回官方基线：`git -C "$env:LOCALAPPDATA/ok-ww/data/apps/ok-ww/repo" checkout official-v3.8.15`。
+
+> 唯一仍会覆盖的情况：官方发新版本、`app.json` 被刷新后，在更新卡片点「安装」。
+> 这是启动器的固有行为；真点了就重跑 `python restore.py`，它会重新提交并重新钉 tag。
 
 ## 目录结构
 

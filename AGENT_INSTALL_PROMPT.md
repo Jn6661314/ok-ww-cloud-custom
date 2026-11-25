@@ -62,6 +62,17 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
      app.json.<时间戳>.bak）。所以务必用 restore.py 部署，不要手动只拷 .py 文件。
    - 用户报"版本还是 3.8.14"时：先看是启动器还是应用内；两者不一致就让其重跑 restore.py。
 
+【启动器为什么会把定制刷回官方（v1.8.3 已堵）】
+   - 启动器（pyappify）的动作是：读 app.json 的 current_version → 在 repo 里找同名 git tag
+     （例如 v3.8.15）→ `git checkout -f <tag>`。`-f` 会丢弃工作区所有未提交改动。
+   - 所以"只提交进 git"不够：定制提交只是当时的 HEAD，tag 仍指向官方提交，checkout 一秒钟切回官方
+     （两次真实事故：22 个已跟踪文件被整体还原，config.py 17430→13380 字节）。
+   - restore.py 现在会把版本 tag 本身钉到定制提交（`pin_version_tag_to_head`），原官方指向备份成
+     `official-v3.8.15`。之后启动器 checkout 出来的就是定制树。
+   - 排查用户"定制又没了"：`git -C <repo> reflog -5` 看有没有 `checkout: moving from ... to ...`；
+     `git -C <repo> rev-parse v3.8.15^{commit}` 应等于 `git -C <repo> rev-parse HEAD`。
+     不符合就重跑 restore.py。
+
 【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
    a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是
       更老的官方版（如 v3.8.14），先让用户把官方 ok-ww 更新到 v3.8.15 再装补丁。

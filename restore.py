@@ -20,6 +20,7 @@ import datetime
 import json
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -197,6 +198,159 @@ def sync_app_version(working: Path, stamp: str, do_backup: bool) -> int:
     return 0
 
 
+GIT_AUTHOR = ('ok-ww-custom', 'custom@local')
+# 本地基线的保护标签：即使 HEAD 被切走，这个提交也不会变成孤立对象。
+GIT_TAG = 'local-custom-baseline'
+
+
+def _run_git(repo: Path, *args: str):
+    """在 ``repo`` 里跑一条 git 命令，返回 (returncode, 合并输出)。"""
+    git = shutil.which('git')
+    if not git:
+        return None, '系统里找不到 git'
+    try:
+        done = subprocess.run([git, *args], cwd=str(repo), capture_output=True,
+                              text=True, encoding='utf-8', errors='replace')
+    except OSError as error:  # pragma: no cover - 取决于本机环境
+        return None, str(error)
+    return done.returncode, ((done.stdout or '') + (done.stderr or '')).strip()
+
+
+def sync_repo_git(repo: Path) -> int:
+    """把刚部署的定制文件提交进 ``repo`` 的 git，让启动器的"完整性修复"还原成定制版。
+
+    pyappify 的 shared-checkout 布局是"git 数据在 repo、应用文件在 working"。
+    启动器发现 working 里的被跟踪文件与 git 不一致时，会从 git 把文件还原回去 ——
+    如果定制只以**未提交改动**的形式存在，启动一次就会被整套刷回官方版本
+    （v1.8.2 就是这样丢了 22 个文件，界面上的 MuMu/远控/多账号定制全部消失）。
+
+    把定制提交成 git 里的一个本地提交后，同一次"修复"恢复出来的就是定制内容，
+    启动器再怎么校验也只会校验到我们自己的版本。
+    """
+    if not (repo / '.git').exists():
+        print(f'[git] {repo} 不是 git 仓库，跳过定制提交')
+        return 0
+
+    files = [rel for rel in RELATIVE_FILES if (repo / rel).is_file()]
+    if not files:
+        print('[git] repo 里找不到定制文件，跳过定制提交')
+        return 0
+
+    rc, out = _run_git(repo, 'add', '--', *files)
+    if rc is None:
+        print(f'[git] 跳过定制提交：{out}')
+        return 0
+    if rc != 0:
+        print(f'[git] git add 失败：{out[:200]}')
+        return 0
+
+    # 没有暂存内容 = 上次已经提交过，不必产生空提交。
+    rc, out = _run_git(repo, 'diff', '--cached', '--quiet')
+    if rc == 0:
+        print('[git] 定制内容与 git 中的一致，无需提交')
+        _ensure_custom_tag(repo, files)
+        return 0
+
+    name, email = GIT_AUTHOR
+    rc, out = _run_git(repo, '-c', f'user.name={name}', '-c', f'user.email={email}',
+                       'commit', '-q', '-m',
+                       'local custom baseline: cloud + mumu/android + rahai endless + stream window')
+    if rc:
+        print(f'[git] git commit 失败：{out[:200]}')
+        return 0
+
+    rc, out = _run_git(repo, 'rev-parse', '--short', 'HEAD')
+    head = out if rc == 0 else '?'
+    print(f'[git] 定制已提交到 repo 的 git（{head}），启动器校验时不会再把它们还原成官方版')
+    _ensure_custom_tag(repo, files)
+    return 0
+
+
+def _ensure_custom_tag(repo: Path, files) -> None:
+    """给当前 HEAD 打一个本地标签，避免切换版本后定制提交变成孤立对象。"""
+    rc, _ = _run_git(repo, 'tag', '-f', GIT_TAG)
+    if rc == 0:
+        print(f'[git] 已标记 {GIT_TAG}，切版本后仍可用 git checkout {GIT_TAG} 找回定制')
+
+
+# 官方版本 tag 的备份前缀（例如官方 v3.8.15 被备份成 official-v3.8.15）
+OFFICIAL_TAG_PREFIX = 'official-'
+
+
+def pin_version_tag_to_head(repo: Path) -> int:
+    """让"版本号 tag"指向定制提交，挡住启动器的强制 checkout。
+
+    启动器（pyappify）启动/自修复时，会拿 ``app.json`` 的 ``current_version``
+    （例如 ``v3.8.15``）去找**同名 git tag**，然后 ``git checkout -f`` 过去。
+    ``-f`` 会丢弃工作区里所有"未提交的定制"，所以只把定制提交进 git 仍然不够：
+    定制提交只是 HEAD，启动器照样把 HEAD 切到官方 tag，下一次写文件就全成了官方版
+    （v1.8.2 之后在 23:30 又原样丢了一次，22 个文件、界面里 MuMu/远控/多账号全没了）。
+
+    把版本 tag 本身指到定制提交后，同一次 checkout 切出来的就是定制内容，
+    启动器再怎么校验也只是在校验我们自己的版本。原官方指向会备份成
+    ``official-<版本号>``，需要回到官方基线时 ``git checkout official-v3.8.15`` 即可。
+    """
+    if not (repo / '.git').exists():
+        return 0
+
+    version = read_source_version()
+    if not version:
+        print('[git] 读不到 config.py 的 version，跳过版本 tag 处理')
+        return 0
+
+    rc, current = _run_git(repo, 'rev-parse', f'{version}^{{commit}}')
+    rc_head, head = _run_git(repo, 'rev-parse', 'HEAD')
+    if rc == 0 and rc_head == 0 and current == head:
+        print(f'[git] 版本 tag {version} 已指向定制提交，无需改动')
+        return 0
+
+    if rc == 0:
+        backup = OFFICIAL_TAG_PREFIX + version
+        rc_backup, _ = _run_git(repo, 'rev-parse', '--verify', '--quiet',
+                                f'refs/tags/{backup}')
+        if rc_backup != 0:
+            # 只在第一次改 tag 时备份，避免把定制提交又备份成"官方指向"。
+            _run_git(repo, 'tag', backup, current)
+
+    name, email = GIT_AUTHOR
+    rc, out = _run_git(repo, '-c', f'user.name={name}', '-c', f'user.email={email}',
+                       'tag', '-f', '-a', version, '-m',
+                       f'ok-ww {version} (local custom baseline)', 'HEAD')
+    if rc:
+        print(f'[git] 版本 tag {version} 更新失败：{out[:200]}')
+        return 0
+
+    print(f'[git] 版本 tag {version} -> 定制提交：启动器按版本号 checkout 时切出的是'
+          f'定制版（原官方指向已备份为 {OFFICIAL_TAG_PREFIX}{version}）')
+    return 0
+
+
+def verify_deploy(working: Path, repo: Path) -> int:
+    """部署后自检：确认 working / repo 里的定制文件与仓库内容逐字节一致。"""
+    problems = []
+    for rel in RELATIVE_FILES:
+        source = FILES / rel
+        if not source.is_file():
+            continue
+        want = source.read_bytes()
+        for label, root in (('working', working), ('repo', repo)):
+            target = root / rel
+            if not target.is_file():
+                problems.append(f'{label}/{rel} 缺失')
+                continue
+            if target.read_bytes() != want:
+                problems.append(f'{label}/{rel} 与仓库内容不一致')
+    if not problems:
+        print(f'[自检] {len(RELATIVE_FILES)} 个文件在 working / repo 两处均与仓库一致')
+        return 0
+    print('[自检] 发现以下问题（启动器可能已经还原过官方版本）：')
+    for item in problems[:12]:
+        print(f'  - {item}')
+    if len(problems) > 12:
+        print(f'  ... 共 {len(problems)} 项')
+    return 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('working', nargs='?', type=Path,
@@ -227,6 +381,12 @@ def main(argv=None) -> int:
     if not args.working_only:
         if restore_to(args.repo, stamp, not args.no_backup, 'repo'):
             return 1
+        # 必须在 repo 落盘之后再提交，否则提交进去的是旧内容。
+        sync_repo_git(args.repo)
+        # 提交之后再把版本 tag 指过来，启动器 checkout 版本号时才会切出定制版。
+        pin_version_tag_to_head(args.repo)
+
+    verify_deploy(args.working, args.repo)
 
     print('')
     print('恢复完成。启动 ok-ww 后按设备照常运行同一个「每日任务」即可：')
@@ -236,6 +396,12 @@ def main(argv=None) -> int:
     print('账号 Cookie（cloud_profiles）、多账号配置和任务配置（configs）未改动，无需重新配置。')
     print('启动器（ok-ww.exe）显示的版本号已同步为 config.py 的 version，'
           '不会再提示更新到同一版本而覆盖定制。')
+    if not args.working_only:
+        print(f'定制已同时提交进 repo 的 git（标签 {GIT_TAG}），并把版本 tag 指向了这个'
+              '提交：启动器按版本号 checkout / 校验时切出来的是定制版，'
+              '不会再被刷回官方代码。')
+    print('注意：不要在启动器的更新卡片里手动"安装"官方版本，那会把 working 覆盖成官方代码；'
+          '真的更新了，重跑一次本脚本即可。')
     return 0
 
 
