@@ -62,6 +62,7 @@ RELATIVE_FILES = [
     'src/gui/CharacterCodeTab.py',
     'src/char/CustomCharLoader.py',
     'src/char/CharFactory.py',
+    'src/char/Aemeath.py',
     'src/task/BaseCombatTask.py',
     # AutoCombatTask 触发任务: MuMu 队伍识别抖动时不能让 None.perform()/普通异常
     # 冒泡到 TaskExecutor 把触发任务 disable, 否则自动战斗会"打着打着自己关了"。
