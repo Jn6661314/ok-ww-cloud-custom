@@ -2,6 +2,10 @@
 
 按**日**汇总，完整改动明细见 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases)（中英双语）。
 
+### 2026-11-25
+
+- **[v1.5.1](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.1)** — 修复全新安装装不全导致的启动失败：首装脚本与恢复脚本改为共用同一份 32 文件清单（此前首装只装 15 个，漏掉 `DeviceManager.py`、`BaseWWTask.py` 等 17 个关键文件）；安装提示词补充 ok-ww 目录结构说明与「报没 adb / 找不到 .py」排查清单。
+
 ### 2026-11-24
 
 - **[v1.5.0](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.0)** — 梦魇聚落（残象聚落）传送按钮改用 OCR 识别（实测置信度 0.99998）；登录后黑屏 30 秒冗余等待窗口，不再打断每日任务；安卓设备启动时用 adb 拉起鸣潮。
@@ -71,8 +75,21 @@
 
 适用于 pyappify 安装版，默认路径 `%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/working`。
 
+> **先看清目录结构**（这是最常见的误解）：
+>
+> ```text
+> %LOCALAPPDATA%/ok-ww/                              ← 安装根目录，只有 ok-ww.exe，没有任何 .py
+> %LOCALAPPDATA%/ok-ww/data/apps/ok-ww/working/     ← 实际运行的源码
+> %LOCALAPPDATA%/ok-ww/data/apps/ok-ww/repo/        ← 源码副本（官方更新会从这里覆盖 working）
+> %LOCALAPPDATA%/ok-ww/data/apps/ok-ww/python/      ← ok-ww 自带的 Python（含 adbutils 等依赖）
+> ```
+>
+> 在安装根目录里找 `.py` 文件**一定找不到**，这是正常的，不是安装失败。
+> 跑脚本请用 ok-ww 自带的 Python：`%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/python/python.exe`；
+> 系统 Python 通常没装 `adbutils`，会报 `ModuleNotFoundError: adbutils`（看起来像"没有 adb"）。
+
 1. 关闭 ok-ww。
-2. 克隆或下载本仓库。
+2. 克隆或下载本仓库（**要完整仓库**，安装清单在 `restore.py` 里，只下载单个文件会装不全）。
 3. 按需补全工坊代码包（可选，索引已随仓库提供）：
 
    ```bash
@@ -87,7 +104,14 @@
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
+   脚本会把**全部 32 个**定制文件复制到 `working` 与 `repo` 两处，结束时打印
+   `copied 32 files -> ...` 两行 —— 确认这两行都出现，说明装齐了。
+
 5. 打开 ok-ww，选择设备"云游戏"，即可看到云每日/云多账号/保存 Cookie/切换账号任务，以及"角色代码"页（含工坊）。
+
+> **如果你的 ok-ww 是用旧版本安装器装的**：可能只装了 15 个文件，漏掉 `DeviceManager.py`、
+> `BaseWWTask.py` 等 17 个关键文件，表现为启动报错、任务列表不全、报"没 adb"。
+> 关闭 ok-ww 后补跑 `python restore.py` 即可补齐全部 32 个文件。
 
 ## 本地安卓模拟器（ADB）
 
@@ -128,6 +152,18 @@
 **MuMu 抓屏偶尔返回全黑画面**：模拟器窗口被最小化/遮挡、或 MuMu 设置里开了「后台保活」时，IPC 通道会返回一张纯黑图。现在脚本会先自动重建连接重试，仍失败会明确报错，不会再"卡住不动"。
 
 **停在【连接已断开】对话框**：挂机过久或网络抖动导致。脚本会自动点"确认"并重新登录；也可以手动把游戏切回大世界再启动任务。
+
+**报"没有 adb" / 找不到 adb.exe**：按顺序排查这 4 条，前两条最常见。
+
+| # | 现象 | 原因与解法 |
+| --- | --- | --- |
+| 1 | 装完补丁后启动就报错、任务列表不全 | 旧安装器只装了 15 个文件，漏掉 `DeviceManager.py`、`BaseWWTask.py` 等 17 个关键文件 → 关闭 ok-ww 补跑 `python restore.py` |
+| 2 | 用系统 Python 跑脚本报 `ModuleNotFoundError: adbutils` | 系统 Python 没装 adbutils → 改用 ok-ww 自带的 `%LOCALAPPDATA%/ok-ww/data/apps/ok-ww/python/python.exe`（它自带 adbutils 和 `adb.exe`） |
+| 3 | 选了设备但报 `Emulator is not connected, start the emulator first!` | 模拟器没启动，或 adb 端口不通（MuMu 默认 `127.0.0.1:16384`）→ 先启动模拟器 |
+| 4 | 日志出现 `set ADBUTILS_ADB_PATH failed` | adbutils 没装全或 `adb.exe` 缺失 → 用自带 Python 重装，或 `python -m pip install adbutils` |
+
+**云游戏用户完全不需要 adb**：只有「安卓/本地模拟器」设备类型才走 adb 通道，
+选「云游戏」时这段逻辑完全不执行。
 
 ## 更新被官方覆盖后怎么恢复
 
