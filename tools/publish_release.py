@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.6.0', 'v1.6.0 · 以官方 v3.8.15 为基线重建 + 无尽模式 / Rebase onto official v3.8.15 with Endless Mode', 'HEAD'),
     ('v1.0.0', 'v1.0.0 · 云鸣潮定制补丁集首次发布 / First release of the Wuthering Waves cloud patch set', '848e78c'),
     ('v1.0.1', 'v1.0.1 · Agent 一键安装提示词 / Agent-Assisted Install Prompt', '1c9ecb1'),
     ('v1.1.0', 'v1.1.0 · 故障方块机制 / 云 UID 遮罩 / 通关后卡住修复 / ADB 设备入口', '4e2cb3b'),
