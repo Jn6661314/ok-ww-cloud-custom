@@ -843,6 +843,12 @@ class BaseWWTask(BaseTask):
         """
         if not self.is_adb():
             return False
+        # 战斗判定每帧都会调到这里; 点掉弹窗后有 2s sleep, 期间画面可能还是弹窗,
+        # 不节流的话会重复点确认(弹窗消失后那一击可能落到登录页)。15s 内只处理一次,
+        # 足够 AutoLoginTask(每 5s 一次)接手重新登录。
+        now = time.time()
+        if now - getattr(self, '_android_disconnect_handled_at', 0) < 15:
+            return False
         frame = self.executor.nullable_frame()
         if frame is None:
             return False
@@ -861,6 +867,7 @@ class BaseWWTask(BaseTask):
         # OCR 结果按 y 排序, 最后一个"确认"就是弹窗底部的按钮
         self.click(confirm[-1], after_sleep=2)
         self.logged_in = False
+        self._android_disconnect_handled_at = time.time()
         return True
 
     def wait_login(self):

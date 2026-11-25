@@ -177,6 +177,13 @@ class CombatCheck(BaseWWTask):
         return now - self._no_enemy_since >= seconds
 
     def do_check_in_combat(self, target):
+        # 安卓端(如 MuMu)掉线弹窗必须在战斗判定前处理。触发任务(AutoCombatTask)
+        # 和战斗循环都不经过 is_main(), 之前只有 is_main() 检查掉线, 导致弹窗
+        # 遮暗画面 -> check_health_bar() 恒 False -> 一直 target lost retarget,
+        # 最后 break out of combat, 表现就是"卡住不动、也不重新登录"。
+        # 点掉弹窗 + logged_in=False 后, 由 AutoLoginTask 每 5 秒自动重新登录。
+        if self.is_adb() and self.handle_android_disconnect():
+            return self.reset_to_false(reason='android disconnected')
         if self.in_liberation:
             return True
         if self._in_combat:

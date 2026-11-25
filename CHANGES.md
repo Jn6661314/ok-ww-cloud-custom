@@ -11,6 +11,7 @@
 
 | 版本 | 一句话摘要 |
 | --- | --- |
+| [v1.5.5](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.5) | 修复 MuMu 掉线弹窗导致卡住不动：游戏弹出"连接已断开"遮暗画面后，触发任务/战斗循环不经过 `is_main()`，掉线检测从不触发，脚本一直在暗屏上找血条→retarget 失败→卡死且不重登；改为战斗判定入口也检查掉线弹窗，点确认并复位登录态，由 AutoLoginTask 自动重登（含 15s 防重复点击节流），PC/云游戏行为不变 |
 | [v1.5.4](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.4) | 修复 MuMu 打着打着就停：切人/intro 动画期间 HUD 圆形头像短暂消失，`in_team()` 返回 -1 导致切人卡 5 秒后中断战斗；安卓端切人改用脚本维护的逻辑下标，不再依赖画面判定，PC/云游戏行为不变 |
 | [v1.5.3](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.3) | 修复 MuMu 手动锁定后仍不战斗：手游 UI 无 PC 锁定图标、`has_target()` 恒失败一直 retarget；改为安卓端用头顶红色血条判定目标（阈值 0.95→0.8），锁敌键改用 Y 键（原中键对模拟器无效），PC/云游戏行为不变 |
 | [v1.5.2](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.5.2) | 修复 MuMu/安卓端无法自动战斗：安卓队伍栏无数字徽章导致当前角色下标恒为 -1，`get_current_char()` 返回 None 使 `.perform()` 抛 AttributeError；改为脚本维护逻辑下标 + 兜底选角 + 切人同步，PC/云游戏行为不变 |
