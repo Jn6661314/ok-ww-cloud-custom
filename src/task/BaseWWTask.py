@@ -31,8 +31,24 @@ CLOUD_RELOGIN_TIMEOUT = 600
 # 安卓端(模拟器)"连接已断开"弹窗: 画面后面仍然是大世界, in_team 判定依然为 True,
 # 任务会以为一切正常, 但所有点击都被弹窗挡住, 表现同样是"卡住不动"。
 # 该弹窗只有"确认"一个按钮, 点掉后游戏会退回登录页, 由 wait_login 重新登录。
-ANDROID_DISCONNECT_TEXTS = re.compile(r'连接已断开|連接已斷開|断开连接|斷開連接|重新登录|重新登錄')
-ANDROID_CONFIRM_TEXTS = ['确认', '確認']
+ANDROID_DISCONNECT_TEXTS = re.compile(r'连接已断开|連接已斷開|断开连接|斷開連接|重新登录|重新登錄|重新連線')
+# 弹窗按钮文案: 常规"确认"外, 部分版本掉线弹窗的按钮就是"重新登录/重新连接",
+# 不加进候选会让 OCR 找不到按钮, 弹窗永远点不掉(表现为"卡住不动")。
+ANDROID_CONFIRM_TEXTS = ['确认', '確認', '重新登录', '重新登錄', '重新连接', '重新連線', '重新連接']
+# 掉线频率统计: 短时间内反复掉线基本是模拟器/网络环境问题(脚本无法根治),
+# 攒够次数提示一次用户检查 MuMu 网络设置, 避免每 3 分钟刷一条通知。
+ANDROID_DISCONNECT_GUIDE_SHORT = (
+    'MuMu 短时间内频繁掉线，脚本已自动重连；建议关闭 MuMu 的后台省电/限帧设置，'
+    '详见日志中的完整排查建议。')
+ANDROID_DISCONNECT_GUIDE = (
+    'MuMu 频繁掉线完整排查建议:\n'
+    '1. MuMu 设置中心 → 性能/其他: 关闭"后台挂机时限制帧率/智能省电"类选项;\n'
+    '2. MuMu 挂机时不要最小化到托盘, 保持后台网络开启;\n'
+    '3. 模拟器安装目录 Nemu\\EmulatorShell\\networkReset.bat 以管理员运行后重启模拟器;\n'
+    '4. 仍频繁掉线可尝试更换 DNS(114.114.114.114)或使用游戏加速器。')
+ANDROID_DISCONNECT_GUIDE_INTERVAL = 1800  # 同一条设置建议的再次提醒间隔(秒)
+ANDROID_DISCONNECT_GUIDE_THRESHOLD = 3    # 10 分钟内掉线多少次后提醒
+ANDROID_DISCONNECT_GUIDE_WINDOW = 600
 # CLOUD ACCOUNT ENTRY PATCH: cloud game can take minutes to load after clicking
 # "进入游戏"; the home-page button stays visible, so clicks must be throttled.
 CLOUD_START_COOLDOWN = 60
@@ -1097,7 +1113,28 @@ class BaseWWTask(BaseTask):
         self.click(confirm[-1], after_sleep=2)
         self.logged_in = False
         self._android_disconnect_handled_at = time.time()
+        self._track_android_disconnect_frequency()
         return True
+
+    def _track_android_disconnect_frequency(self):
+        """统计掉线频率: 短时间内反复掉线提示用户检查模拟器/网络环境。
+
+        实测(2026-11-25 日志)MuMu 挂机时每 180 秒整断线一次, 脚本只能自动
+        重连, 根治要改 MuMu 设置(后台省电/网络)或网络环境。按窗口计数提醒,
+        同一条建议最多每 30 分钟弹一次, 避免刷屏。
+        """
+        now = time.time()
+        stamps = getattr(self, '_android_disconnect_times', [])
+        stamps = [t for t in stamps if now - t < ANDROID_DISCONNECT_GUIDE_WINDOW]
+        stamps.append(now)
+        self._android_disconnect_times = stamps
+        if len(stamps) < ANDROID_DISCONNECT_GUIDE_THRESHOLD:
+            return
+        if now - getattr(self, '_android_disconnect_guide_at', 0) < ANDROID_DISCONNECT_GUIDE_INTERVAL:
+            return
+        self._android_disconnect_guide_at = now
+        self.log_warning(self.tr(ANDROID_DISCONNECT_GUIDE))
+        self.log_warning(self.tr(ANDROID_DISCONNECT_GUIDE_SHORT), notify=True)
 
     def wait_login(self):
         if not self.logged_in:

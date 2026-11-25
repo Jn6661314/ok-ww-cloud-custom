@@ -12,6 +12,14 @@ from src.task.task_icons import task_icon
 STAGE_PROGRESS = re.compile(r"进行中.*?(\d+)\s*[/／]\s*(\d+)")
 STAGE_STATUS = re.compile(r"进行中|已(?:通关|完成)|(?:\d+\s*(?:天|小时|分钟))")
 
+# 手游(MuMu/安卓)端适配:
+# - 无尽模式详情页没有 简单/困难 难度选项, 任务无法自动挑战, 明确提示玩家。
+# - 开局首关会弹"无尽模式"玩法说明弹窗(居中"确认"按钮), 不点掉会挡住棋盘识别。
+# - 手游详情页布局与 PC 有差异, 难度/开始按钮识别提供宽域 OCR 兜底。
+ENDLESS_RE = re.compile(r"无尽模式|無盡模式")
+ENDLESS_POPUP_RE = re.compile(r"玩家可以一直游玩|直到失败")
+ANDROID_DIFFICULTY_BOX = (.5, .05, 1.0, .7)
+
 
 class ChallengeFailed(RuntimeError):
     pass
@@ -21,7 +29,11 @@ class RahaiBlocksTask(BaseTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "3.8 拉海洛方块·逆转"
-        self.description = "从活动关卡列表或关卡详情页开始，挑战所有已解锁且未通关的关卡。支持简体中文 PC 客户端与云鸣潮。"
+        self.description = (
+            "从活动关卡列表或关卡详情页开始，挑战所有已解锁且未通关的关卡。"
+            "支持简体中文 PC 客户端、云鸣潮与 MuMu/安卓模拟器"
+            "（模拟器需保持 MuMu 窗口在前台；无尽模式暂不支持自动挑战）。"
+        )
         self.group_name = "Daily Activities"
         self.group_icon = task_icon("category-daily")
         self.supported_languages = ["zh_CN"]
@@ -63,6 +75,46 @@ class RahaiBlocksTask(BaseTask):
     def _stage_details(self):
         return self._event_title() and self.ocr(.68, .43, .82, .48, match="关卡目标")
 
+    def _endless_page(self):
+        """当前是否处于无尽模式(详情页或玩法弹窗)。无尽模式没有难度选项。"""
+        return (self._event_title()
+                and (self.ocr(.0, .15, .7, .75, match=ENDLESS_RE)
+                     or self.ocr(.0, .15, .7, .75, match=ENDLESS_POPUP_RE)))
+
+    def _selected_difficulty(self, difficulty, wide=False):
+        """详情页当前选中的难度是否为 difficulty。
+
+        narrow: PC 布局右上方标题区域 (.68,.125,.96,.181), 只有选中难度会出现在这里。
+        wide:   手游布局兜底, 扫整个右栏; 若同时读到"简单/困难"页签, 取最靠上的
+                (标题区)那个作为当前选中难度。
+        """
+        if not wide:
+            return bool(self.ocr(.68, .125, .96, .181, match=re.compile(difficulty + r"$")))
+        boxes = self.ocr(*ANDROID_DIFFICULTY_BOX, match=re.compile(r"困难|简单"))
+        if not boxes:
+            return False
+        top = min(boxes, key=lambda box: box.y)
+        return bool(top and re.fullmatch(difficulty, top.name.strip()))
+
+    def _widest_selected_difficulty(self):
+        """宽域识别当前选中的难度(手游端), 返回 '简单'/'困难' 或 None。"""
+        for name in ("困难", "简单"):
+            if self._selected_difficulty(name, wide=True):
+                return name
+        return None
+
+    def _tutorial_confirm(self):
+        """开局玩法说明弹窗(如"无尽模式"介绍, 居中"确认"按钮): 点掉并返回是否处理过。"""
+        if not (self.ocr(.0, .2, .5, .6, match=ENDLESS_RE)
+                or self.ocr(.0, .2, .5, .6, match=ENDLESS_POPUP_RE)):
+            return False
+        confirm = self.ocr(.38, .85, .62, .97, match=re.compile(r"^确认$|^確認$"))
+        if not confirm:
+            return False
+        self.log_info("关闭玩法说明弹窗(无尽模式)。")
+        self.click(confirm[0], after_sleep=.6)
+        return True
+
     def _scroll_stages(self, interaction, direction, stages):
         if not self._clickable(interaction):
             raise RuntimeError("请将鸣潮窗口保持在前台。")
@@ -100,6 +152,14 @@ class RahaiBlocksTask(BaseTask):
             self.log_info("退回了活动主页，点击「立即前往」返回关卡列表。")
             self.click(go_now[0], after_sleep=.8)
         stages = self.wait_until(self._stage_list, time_out=5)
+        if not stages and self.is_adb():
+            # 手游端 X 按钮坐标可能不准: 用返回键(esc 已映射为安卓返回)兜底关掉详情页
+            self.log_info("手游端返回关卡列表失败，尝试安卓返回键。")
+            self.send_key('esc', after_sleep=.8)
+            go_now = self.wait_until(self._go_now_button, time_out=2)
+            if go_now:
+                self.click(go_now[0], after_sleep=.8)
+            stages = self.wait_until(self._stage_list, time_out=5)
         if not stages:
             raise RuntimeError("挑战结束后无法返回关卡列表。")
         return stages
@@ -129,13 +189,18 @@ class RahaiBlocksTask(BaseTask):
 
         difficulty = ("简单", "困难")[completed]
 
-        def selected():
-            return self.ocr(.68, .125, .96, .181, match=re.compile(difficulty + r"$"))
-
-        if not selected():
+        if not self._selected_difficulty(difficulty):
             self.click(.085, (.189, .276)[completed], after_sleep=.35)
-            if not self.wait_until(selected, time_out=4):
-                raise ChallengeFailed(f"无法选择{difficulty}难度。")
+            if not self.wait_until(lambda: self._selected_difficulty(difficulty), time_out=4):
+                # 手游端难度页签坐标可能不同: 无法按 PC 区域确认目标难度时,
+                # 宽域 OCR 识别当前选中难度; 只要页面上还有难度字样就继续
+                # (实际以详情页当前选中的难度开打)。
+                selected = self._widest_selected_difficulty()
+                if selected:
+                    self.log_warning(f"未能确认{difficulty}难度已选中，"
+                                     f"按当前选中难度({selected or '未知'})继续。")
+                else:
+                    raise ChallengeFailed(f"无法选择{difficulty}难度。")
         self._start_and_play(interaction, difficulty, f"{title.name} · {difficulty}")
         self.log_info(f"已通关：{title.name} · {difficulty}")
 
@@ -178,13 +243,21 @@ class RahaiBlocksTask(BaseTask):
 
         v1.5.16: 玩家手动打开某个关卡页面后直接跑任务, 不再要求必须停在列表页。
         难度以详情页当前选中的为准(OCR 识别"简单/困难"), 避免误切难度。
+        v1.5.17: 手游端布局差异导致 PC 区域读不到难度时, 用宽域 OCR 兜底;
+        无尽模式没有难度选项, 明确提示不支持自动挑战。
         """
         difficulty = None
         for name in ("困难", "简单"):
-            if self.ocr(.68, .125, .96, .181, match=re.compile(name + r"$")):
+            if self._selected_difficulty(name):
                 difficulty = name
                 break
         if difficulty is None:
+            # 手游端布局差异: PC 标题区域读不到时用宽域 OCR 兜底
+            difficulty = self._widest_selected_difficulty()
+        if difficulty is None:
+            if self._endless_page():
+                raise ChallengeFailed(
+                    "当前是「无尽模式」页面，暂不支持自动挑战；请打开简单/困难关卡详情页后再运行。")
             raise ChallengeFailed("无法识别关卡页面当前选中的难度。")
         self._start_and_play(interaction, difficulty, f"关卡页面直接开始 · {difficulty}")
 
@@ -222,7 +295,8 @@ class RahaiBlocksTask(BaseTask):
                 stages = self._return_to_list()
             else:
                 raise FatalTaskError(
-                    "请先打开简体中文的「拉海洛方块·逆转」活动关卡列表或任一关卡详情页。")
+                    "请先打开简体中文的「拉海洛方块·逆转」活动关卡列表或任一关卡详情页"
+                    "（MuMu/安卓端同样支持；无尽模式页面暂不支持自动挑战）。")
 
         stages = self._first_page(interaction, stages)
         attempted = set()
@@ -296,6 +370,8 @@ class RahaiBlocksTask(BaseTask):
         return True
 
     def _ready_board(self):
+        if self._tutorial_confirm():
+            return False
         if self._close_help_popup():
             return False
 
@@ -388,7 +464,11 @@ class RahaiBlocksTask(BaseTask):
             if not board:
                 if self.wait_until(self._reward, time_out=3):
                     return
-                # 挑战中游戏可能弹出玩法说明(如故障方块介绍), 关闭后棋盘恢复。
+                # 挑战中游戏可能弹出玩法说明(如无尽模式介绍/故障方块介绍),
+                # 点掉"确认"/关闭后棋盘恢复。
+                if self.wait_until(self._tutorial_confirm, time_out=2):
+                    self.sleep(.5)
+                    continue
                 if self.wait_until(self._close_help_popup, time_out=2):
                     self.sleep(.5)
                     continue

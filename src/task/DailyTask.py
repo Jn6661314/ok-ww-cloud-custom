@@ -1,4 +1,5 @@
 import re
+import time
 
 
 from ok import Logger, TaskDisabledException
@@ -21,6 +22,14 @@ AUTO_FARM_NIGHTMARE_NEST = 'Auto Farm all Nightmare Nest'
 MERGE_ECHO_IF_DISCARDED_OVER_1000 = 'Merge Echo If discarded > 1000'
 TELEPORT_AND_FARM_4C_ECHO = 'Teleport and Farm 4C Echo'
 ADDITIONAL_TASKS = 'Additional Tasks to Run After Daily Task'
+
+# 手游端(MuMu/安卓)活跃行迹页: 布局与 PC 不同, PC 专属坐标/OCR 区域全部落空
+# (实测 AndroidDailyTask 连续 "total daily points 未识别" -> 保守跳过体力),
+# 改为宽域 OCR: 先定位"活跃行迹"子页签, 再全页搜 x/180 与 x/100 形式的读数。
+ANDROID_ACTIVITY_TRACE_RE = re.compile(r'活跃行迹|活躍行跡|每日活跃|每日活躍')
+ANDROID_DAILY_PROGRESS_RE = re.compile(r'(\d{1,3})\s*[/／]\s*180')
+ANDROID_DAILY_POINTS_RE = re.compile(r'(\d{1,3})\s*[/／]\s*(100|200)')
+ANDROID_ACTIVITY_PAGE_RE = re.compile(r'活跃度|活躍度')
 
 
 class DailyTask(WWOneTimeTask, BaseCombatTask):
@@ -266,20 +275,61 @@ class DailyTask(WWOneTimeTask, BaseCombatTask):
         self.log_info(self.tr('open_daily'))
         self.openF2Book("gray_book_quest")
         self.click(0.17, 0.12, after_sleep=1)
-        progress = self.ocr(0.1, 0.1, 0.5, 0.75, match=re.compile(r'^(\d+)/180$'))
-        if not progress:
-            self.click(0.974, 0.6, after_sleep=1)
-            progress = self.ocr(0.1, 0.1, 0.5, 0.75, match=re.compile(r'^(\d+)/180$'))
-        if progress:
-            current = int(progress[0].name.split('/')[0])
+        if self.is_adb():
+            self._android_open_activity_trace()
+        if self.is_adb():
+            # 手游端: 宽域 OCR, PC 的 (0.1,0.1,0.5,0.75)+^x/180$ 在手游布局下读不到
+            progress = self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_DAILY_PROGRESS_RE,
+                                name='android_daily_progress')
+            if not progress:
+                self.click(0.974, 0.6, after_sleep=1)
+                progress = self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_DAILY_PROGRESS_RE,
+                                    name='android_daily_progress')
+            if progress:
+                m = ANDROID_DAILY_PROGRESS_RE.search(progress[0].name)
+                current = int(m.group(1)) if m else 0
+            else:
+                current = 0
         else:
-            current = 0
+            progress = self.ocr(0.1, 0.1, 0.5, 0.75, match=re.compile(r'^(\d+)/180$'))
+            if not progress:
+                self.click(0.974, 0.6, after_sleep=1)
+                progress = self.ocr(0.1, 0.1, 0.5, 0.75, match=re.compile(r'^(\d+)/180$'))
+            if progress:
+                current = int(progress[0].name.split('/')[0])
+            else:
+                current = 0
         self.info_set('current daily progress', current)
         self._daily_points_unknown = False
         points = self.get_total_daily_points()
         # 识别失败绝不能当成 0, 否则活跃度已满还会白刷一遍体力.
         daily_reward_ready = points is not None and points >= 100
         return current, daily_reward_ready
+
+    def _android_open_activity_trace(self, time_out=6):
+        """手游端: 确保"活跃行迹"子页已打开。
+
+        手游征程页的子页签位置与 PC 不同, PC 坐标 (0.17,0.12) 未必选中活跃行迹。
+        先检查页面上是否已出现活跃度读数; 没有就用 OCR 定位"活跃行迹"文字点击。
+        点击落空也只是点到内容区, 不会产生副作用。
+        """
+        deadline = time.time() + time_out
+        while True:
+            if self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_ACTIVITY_PAGE_RE,
+                        name='android_activity_page'):
+                return True
+            tab = self.ocr(0.0, 0.0, 0.7, 0.4, match=ANDROID_ACTIVITY_TRACE_RE,
+                           name='android_activity_tab')
+            if tab:
+                self.log_info(self.tr('click 活跃行迹 tab (android)'))
+                self.click(tab[0], after_sleep=1)
+                if self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_ACTIVITY_PAGE_RE,
+                            name='android_activity_page'):
+                    return True
+            if time.time() >= deadline:
+                self.log_warning(self.tr('安卓端未找到「活跃行迹」页签, 活跃度可能识别失败'))
+                return False
+            self.sleep(0.5)
         # 请注意：如果任务【累计消耗180点结晶波片】已完成，current 也可能为 0，因为翻页后也有可能识别不到已用体力。
 
     def get_total_daily_points(self):
@@ -289,6 +339,8 @@ class DailyTask(WWOneTimeTask, BaseCombatTask):
         失败就直接当成 0 会误判成"活跃度未满"并重复消耗体力. 这里换多个区域、
         重试几次, 仍读不到就明确标记未知, 让调用方保守跳过体力任务.
         """
+        if self.is_adb():
+            return self._android_total_daily_points()
         regions = [(0.19, 0.8, 0.30, 0.93), (0.15, 0.75, 0.35, 0.95)]
         for _ in range(3):
             for x, y, to_x, to_y in regions:
@@ -302,6 +354,45 @@ class DailyTask(WWOneTimeTask, BaseCombatTask):
                 if 0 <= points <= 200:
                     self.info_set('total daily points', points)
                     return points
+            self.sleep(0.5)
+
+        self._daily_points_unknown = True
+        self.info_set('total daily points', self.tr('未识别'))
+        self.log_warning(self.tr('无法确认当前活跃度，为避免浪费体力将跳过体力刷取。'))
+        return None
+
+    def _android_total_daily_points(self):
+        """手游端活跃行迹页: 布局与 PC 不同, 全页 OCR 找 x/100 形式的活跃度读数。
+
+        页面上可能有多个 x/N 计数(任务进度 x/5 等), 用分母限定 100/200 过滤;
+        有多个候选时优先取与"活跃度"文字垂直距离最近的那个。
+        """
+        regions = [(0.0, 0.05, 0.9, 0.95), (0.0, 0.3, 0.6, 0.95)]
+        for _ in range(3):
+            for region in regions:
+                boxes = self.ocr(*region, match=ANDROID_DAILY_POINTS_RE,
+                                 name='android_daily_points')
+                if not boxes:
+                    continue
+                candidates = []
+                for box in boxes:
+                    m = ANDROID_DAILY_POINTS_RE.search(box.name)
+                    if not m:
+                        continue
+                    points, total = int(m.group(1)), int(m.group(2))
+                    if not 0 <= points <= total:
+                        continue
+                    candidates.append((points, box))
+                if not candidates:
+                    continue
+                chosen = candidates[0]
+                anchor = self.ocr(*region, match=ANDROID_ACTIVITY_PAGE_RE,
+                                  name='android_activity_anchor')
+                if anchor:
+                    chosen = min(candidates, key=lambda pc: abs(pc[1].y - anchor[0].y))
+                points = chosen[0]
+                self.info_set('total daily points', points)
+                return points
             self.sleep(0.5)
 
         self._daily_points_unknown = True
