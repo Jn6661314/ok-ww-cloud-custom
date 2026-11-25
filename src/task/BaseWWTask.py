@@ -8,6 +8,7 @@ import numpy as np
 
 from ok import BaseTask, Logger, find_boxes_by_name, og, find_color_rectangles, mask_white, Box
 from ok import CannotFindException
+from ok.task.exceptions import WaitFailedException
 import cv2
 
 from src.Labels import Labels
@@ -52,14 +53,9 @@ CONFIRM_BUTTON_TEXTS = ('确认', '確定', '确定', re.compile(r'确\s*认|確
 CONFIRM_BUTTON_SEARCH_BOX = (0.3, 0.3, 0.7, 0.85)
 # 安卓索拉指南左列的类别图标(PC 模板), 用于判断书是否已经打开
 ANDROID_BOOK_TAB_FEATURES = ('gray_book_quest', 'gray_book_boss', 'gray_book_weekly', 'gray_book_all_monsters')
-# 手游队伍栏的编队识别: 非出战角色头像旁有 1/2/3 数字徽章, 以及 MuMu 键位映射
-# 叠加的"切换角色N"提示。PC 的 char_N_text 模板在手游样式上匹配不到(0.11~0.15),
-# 改用 OCR 读这两类文字, 直接按游戏里的编队槽位判断当前角色和切换键。
-ANDROID_PARTY_HUD_BOX = (0.84, 0.16, 0.99, 0.46)
-ANDROID_PARTY_BADGE_RE = re.compile(r'^[123]$')
-ANDROID_SWITCH_LABEL_RE = re.compile(r'切\s*换\s*角\s*色\s*([123])')
-# MuMu 手游只有 1/2 两颗切换键, 对应当前不在场的两个队友, 映射随出战角色
-# 动态变化(实测出战 3 号位时: 键 1 -> 2 号位, 键 2 -> 1 号位)。
+# MuMu 手游只有 1/2 两颗切换键, 对应当前编队中不在场的两个队友。
+# 队伍识别以配置的编队为准, 不在战斗期间做画面 OCR(技能特效/伤害数字
+# 会干扰徽章识别, 造成误判)。
 # 绝不能发 3 键 —— 模拟器键位映射里没有绑定, 发了等于没按,
 # 切到 3 号位就会永远失败并在 10 秒后中断战斗。
 ANDROID_SWITCH_KEYS = ('1', '2')
@@ -855,9 +851,28 @@ class BaseWWTask(BaseTask):
 
     def walk_to_treasure(self, send_f=True, raise_if_not_found=True):
         self.log_info(self.tr('start walk_to_treasure'))
-        if not self.walk_to_box(self.find_treasure_icon, end_condition=self.find_f_with_claim_text):
-            if not self.walk_to_box(self.find_treasure_icon, end_condition=self.find_f_with_text):
-                raise Exception(self.tr('can not walk to treasure!'))
+        found = False
+        try:
+            found = bool(self.walk_to_box(self.find_treasure_icon, end_condition=self.find_f_with_claim_text))
+            if not found:
+                found = bool(self.walk_to_box(self.find_treasure_icon, end_condition=self.find_f_with_text))
+        except WaitFailedException:
+            found = False
+            if not self.is_adb():
+                raise
+        if not found and self.is_adb():
+            # 手游端: combat_once 可能在残象切波次/清怪间隙误判"战斗结束",
+            # 走向奖励时其实还在打(现场截图: "清理残象 2/3" 血条仍在), 宝箱
+            # 尚未刷新, 图标永远找不到; 上游恢复路径依赖 in_realm() 的 PC
+            # 模板, 手游端识别不到, WaitFailedException 会炸掉整个每日任务。
+            # 这里改为: 先回去把残象清完再走一次; 还找不到就交给外层的
+            # pick_f / has_claim_stamina 判断(farm 循环自带 rechallenge 恢复)。
+            self.log_warning(self.tr('walk_to_treasure: 未找到宝箱(可能残象未清完), 检查是否仍在战斗'))
+            if self.wait_combat(target=True, time_out=5, raise_if_not_found=False):
+                self.combat_once(target=True, wait_combat_time=5)
+                return self.walk_to_treasure(send_f=send_f, raise_if_not_found=False)
+            self.log_warning(self.tr('walk_to_treasure: 无战斗也无宝箱, 交回上层处理'))
+            return
         if send_f:
             self.walk_until_f(time_out=2, backward_time=0, raise_if_not_found=raise_if_not_found)
         self.sleep(1)
@@ -1276,104 +1291,45 @@ class BaseWWTask(BaseTask):
 
         return current_direction, current_adjust, False
 
-    def _read_android_party_badges(self, force=False):
-        """OCR 手游队伍栏的编队徽章与键位提示, 返回 (非出战槽位, 槽位->切换键)。
+    def android_team_size(self):
+        """安卓端编队人数: 以配置的编队(已加载的角色)为准, 默认 3 人队。
 
-        手游确实有 1/2/3 数字徽章, 只是样式和 PC 模板不同, find_one 命中不了。
-        例如截图里徽章 1/2 同时出现, 说明当前出战的是编队 3 号位; 徽章 1 旁的
-        "切换角色2" 提示则代表按 2 键切到该角色 (MuMu 键位映射可能和槽位倒序)。
-        键位映射随出战角色动态变化, 所以 OCR 读不到的槽位不再填默认键,
-        由 android_switch_key() 按当前角色动态推导。结果做 0.3 秒缓存,
-        避免战斗循环每帧都跑 OCR; force=True 跳过缓存(发键后核实用)。
+        不在战斗期间做画面 OCR 识别(用户要求): 技能特效/伤害数字会干扰
+        队伍栏徽章识别, 造成误判。编队页配置几个人就是几人队。
         """
-        now = time.monotonic()
-        if (not force
-                and getattr(self, '_android_party_scan_ready', False)
-                and now - getattr(self, '_android_party_scan_at', 0) < 0.3):
-            return set(getattr(self, '_android_party_badges', set())), dict(getattr(self, '_android_switch_key_map', {}))
-
-        badges = set()
-        badge_boxes = []
-        key_map = {}
+        chars = getattr(self, 'chars', None) or []
         try:
-            box = self.box_of_screen(*ANDROID_PARTY_HUD_BOX)
-            for b in self.ocr(box=box, match=ANDROID_PARTY_BADGE_RE):
-                text = (getattr(b, 'name', '') or '').strip()
-                if text in ('1', '2', '3'):
-                    index = int(text) - 1
-                    badges.add(index)
-                    badge_boxes.append((index, b.y + b.height / 2))
-            for b in self.ocr(box=box, match=ANDROID_SWITCH_LABEL_RE):
-                match = ANDROID_SWITCH_LABEL_RE.search(getattr(b, 'name', '') or '')
-                if not match:
-                    continue
-                key = match.group(1)
-                label_y = b.y + b.height / 2
-                if badge_boxes:
-                    index, badge_y = min(badge_boxes, key=lambda item: abs(item[1] - label_y))
-                    if abs(badge_y - label_y) < 200:
-                        key_map[index] = key
-        except Exception as e:
-            logger.debug(f'android party badge ocr failed: {e}')
-
-        self._android_party_badges = badges
-        self._android_switch_key_map = key_map
-        self._android_party_scan_at = now
-        self._android_party_scan_ready = True
-        return set(badges), dict(key_map)
+            loaded = len([c for c in chars if c is not None])
+        except Exception:
+            loaded = 0
+        if loaded >= 2:
+            return min(loaded, 3)
+        return 3
 
     def android_switch_key(self, index, exclude=()):
         """安卓端按编队槽位取实际切换键; PC/云仍用 index+1 的原有约定。
 
-        MuMu 只有 1/2 两颗切换键, 分别绑在队伍栏的两个队友按钮上, 按钮内容
-        随出战角色变化, 所以键->角色的映射是动态的。优先级:
-          1. OCR 读到的"切换角色N"键位提示;
-          2. 同队另一个队友已确认的键 -> 剩下那颗必然是本槽位;
-          3. 兜底规律(实测出战 3 号位时键 1 切 2 号位): 键 1 给编队靠后的队友。
-        exclude 里的键是本轮切人已按过但没切成生效的, 跳过以自动换另一颗键。
-        任何路径都不会返回 3 —— 模拟器上没有这个键。
-        """
-        if self.is_adb():
-            _, key_map = self._read_android_party_badges()
-            candidates = []
-            key = key_map.get(index)
-            if key in ANDROID_SWITCH_KEYS:
-                candidates.append(key)
-            current = getattr(self, '_android_current_index', 0)
-            others = [i for i in range(3) if i != current]
-            if index in others:
-                other = [i for i in others if i != index]
-                other_key = key_map.get(other[0]) if other else None
-                if other_key in ANDROID_SWITCH_KEYS:
-                    candidates.append(next(k for k in ANDROID_SWITCH_KEYS if k != other_key))
-                candidates.append('1' if index == max(others) else '2')
-                candidates.append('2' if index == max(others) else '1')
-            candidates.append(str(index + 1))
-            for k in candidates:
-                if k not in exclude:
-                    return k
-            return candidates[0]
-        return str(index + 1)
-
-    def android_confirm_switch(self, target_index):
-        """发切人键后用编队徽章核实实际出战角色, 返回核实到的下标或 None。
-
-        MuMu 的切换键映射随出战角色动态变化, 盲发后必须核实: 按错键时如果
-        还是乐观推进逻辑下标, 脚本以为切成了, 实际还在原角色上, 后续连招
-        全部打在错误的角色假设上, 表现为"切人有问题"。徽章读不到(切人
-        动画期 OCR 抖动)时返回 None, 由调用方决定是否乐观推进。
+        MuMu 只有 1/2 两颗切换键, 分别绑在编队中两个非出战队友的按钮上。
+        以配置的编队为准, 不做战斗中的画面识别(用户要求), 按实测规律推导:
+        键 1 -> 编队靠后的非出战队友(实测出战 3 号位时键 1 切 2 号位),
+        键 2 -> 编队靠前的。exclude 里的键是本轮切人已按过但没生效的,
+        跳过后自动换另一颗键。任何路径都不会返回 3 —— 模拟器上没有这个键。
         """
         if not self.is_adb():
-            return None
-        badges, _ = self._read_android_party_badges(force=True)
-        if len(badges) == 2:
-            missing = [i for i in range(3) if i not in badges]
-            if len(missing) == 1:
-                if missing[0] != getattr(self, '_android_current_index', -1):
-                    self.log_debug(f'android_confirm_switch: current -> {missing[0] + 1}')
-                self._android_current_index = missing[0]
-                return missing[0]
-        return None
+            return str(index + 1)
+        team_size = self.android_team_size()
+        current = getattr(self, '_android_current_index', 0)
+        if not isinstance(current, int) or not 0 <= current < team_size:
+            current = 0
+        others = [i for i in range(team_size) if i != current]
+        if index in others and len(others) <= len(ANDROID_SWITCH_KEYS):
+            first = '1' if index == max(others) else '2'
+            second = '2' if first == '1' else '1'
+            for k in (first, second):
+                if k not in exclude:
+                    return k
+            return first
+        return str(index + 1)
 
     def in_team(self):
         # 安卓端(ADB/模拟器)队伍栏是圆形头像, 没有 PC 端的 1/2/3 数字徽章,
@@ -1438,23 +1394,17 @@ class BaseWWTask(BaseTask):
             return False, -1, 1
 
         self.logged_in = True
-        # 按游戏里的编队识别, 而不是固定写死"2 人队伍 / 当前 1 号位"。
-        # 手游队伍栏中非出战角色带 1/2/3 数字徽章: 两个徽章 -> 3 人队,
-        # 缺的那个槽位就是当前出战角色。切人/动画期 OCR 偶尔读不到时沿用
-        # 脚本维护的 _android_current_index, 不再把它粗暴重置成 0。
-        badges, key_map = self._read_android_party_badges()
-        team_size = len(badges) + 1 if badges else 3
-        team_size = min(max(team_size, 2), 3)
+        # 以配置的编队为准, 不在战斗期间做画面 OCR 识别(用户要求):
+        # 战斗中技能特效/伤害数字会干扰队伍栏徽章识别, 造成误判。
+        # 队伍人数按编队(android_team_size), 当前角色用脚本维护的逻辑
+        # 下标(切人时由 switch_next_char 推进)。
+        team_size = self.android_team_size()
         current_index = getattr(self, '_android_current_index', 0)
-        missing = [i for i in range(team_size) if i not in badges]
-        if badges and len(missing) == 1:
-            current_index = missing[0]
         if not isinstance(current_index, int) or not 0 <= current_index < team_size:
             current_index = 0
         self._android_current_index = current_index
         self.log_debug(
-            f'in_team(android): in world ({reason}), badges={sorted(badges)}, '
-            f'team_size={team_size}, current={current_index}, switch_keys={key_map}')
+            f'in_team(android): in world ({reason}), team_size={team_size}, current={current_index}')
         return True, current_index, team_size
 
         # Function to check if a component forms a ring

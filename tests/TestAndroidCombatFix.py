@@ -51,9 +51,10 @@ class FakeTask:
     def is_browser(self):
         return False
 
-    def _read_android_party_badges(self):
-        # 老测试桩不跑 OCR; 无徽章时按完整三人编队、保留既有逻辑下标。
-        return set(), {0: '1', 1: '2', 2: '3'}
+    def android_team_size(self):
+        # 编队识别以配置的编队为准, 战斗中不做画面 OCR (v1.5.12)。
+        # 桩里 chars 全 None -> 默认完整三人编队。
+        return 3
 
     def log_debug(self, msg):
         self.logs.append(('debug', msg))

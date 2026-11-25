@@ -873,32 +873,18 @@ class BaseCombatTask(CombatCheck):
                 continue
             if now - last_click > 0.1:
                 if self.is_adb():
-                    # 安卓端 MuMu 只有 1/2 两颗切换键, 映射随出战角色动态变化。
-                    # 优先用 OCR 键位提示发键; 发键后等动画落定、抓新帧, 用编队
-                    # 徽章核实实际出战角色 —— 按错键时自动换另一颗键重试,
-                    # 不再盲目推进逻辑下标(否则脚本以为切成了, 实际还在原角色)。
-                    # PC/云仍保持原来的 index+1 约定。
+                    # 安卓端 MuMu 只有 1/2 两颗切换键, 映射按配置的编队动态
+                    # 推导(键 1 -> 编队靠后的非出战队友), 不做战斗中的画面
+                    # 识别(用户要求: 战斗特效会干扰 OCR, 以编队为准)。
+                    # 发键后推进脚本维护的逻辑下标, 否则下面
+                    # `current_index != switch_to.index` 会一直成立, 10 秒后
+                    # 抛 raise_not_in_combat('failed switch chars')。
                     switch_key = self.android_switch_key(switch_to.index, exclude=tried_keys)
                     self.send_key(switch_key)
                     tried_keys.add(switch_key)
-                    self.sleep(0.45)
-                    self.next_frame()
-                    prev_index = getattr(self, '_android_current_index', -1)
-                    confirmed = self.android_confirm_switch(switch_to.index)
-                    if confirmed is None:
-                        # 徽章 OCR 读不到(切人动画期抖动)时保持原来的乐观推进,
-                        # 不让切人卡死。
-                        self._android_current_index = switch_to.index
-                        self.log_debug(f'switch_next_char(android): logical index -> {switch_to.index}')
-                    elif confirmed == switch_to.index:
-                        tried_keys.clear()
-                    elif confirmed != prev_index:
-                        # 出战角色变了但不是目标: 键位映射和预期不同, 清空重试
-                        # 记录, 下一轮会基于新的当前角色重新推导正确的键。
-                        tried_keys.clear()
-                    else:
-                        self.log_debug(f'switch_next_char(android): key {switch_key} did not reach '
-                                       f'{switch_to.index + 1}, actual still {confirmed + 1}, will retry')
+                    self._android_current_index = switch_to.index
+                    self.log_debug(f'switch_next_char(android): key {switch_key}, '
+                                   f'logical index -> {switch_to.index}')
                 else:
                     self.send_key(switch_to.index + 1)
                 self.sleep(0.001)
