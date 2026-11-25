@@ -21,7 +21,7 @@ class RahaiBlocksTask(BaseTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "3.8 拉海洛方块·逆转"
-        self.description = "从活动关卡列表开始，挑战所有已解锁且未通关的关卡。支持简体中文 PC 客户端与云鸣潮。"
+        self.description = "从活动关卡列表或关卡详情页开始，挑战所有已解锁且未通关的关卡。支持简体中文 PC 客户端与云鸣潮。"
         self.group_name = "Daily Activities"
         self.group_icon = task_icon("category-daily")
         self.supported_languages = ["zh_CN"]
@@ -136,13 +136,18 @@ class RahaiBlocksTask(BaseTask):
             self.click(.085, (.189, .276)[completed], after_sleep=.35)
             if not self.wait_until(selected, time_out=4):
                 raise ChallengeFailed(f"无法选择{difficulty}难度。")
+        self._start_and_play(interaction, difficulty, f"{title.name} · {difficulty}")
+        self.log_info(f"已通关：{title.name} · {difficulty}")
+
+    def _start_and_play(self, interaction, difficulty, label):
+        """在关卡详情页上开始当前选中难度并下完这一局(原 _challenge 尾部公共流程)。"""
         if not self.ocr(.68, .48, .88, .55, match=re.compile(r"积分|奖章")):
             raise ChallengeFailed("无法识别关卡目标。")
         start = self._challenge_button()
         if not start:
             raise ChallengeFailed("无法识别开始挑战按钮。")
 
-        self.log_info(f"开始挑战：{title.name} · {difficulty}")
+        self.log_info(f"开始挑战：{label}")
         for _ in range(2):
             self.click(start, down_time=.09, after_sleep=1.3)
             self.next_frame()
@@ -167,7 +172,21 @@ class RahaiBlocksTask(BaseTask):
                 self.click(go_now[0], after_sleep=.8)
             elif not self.wait_until(self._stage_list, time_out=3):
                 raise RuntimeError("领取奖励后无法识别关卡详情。")
-        self.log_info(f"已通关：{title.name} · {difficulty}")
+
+    def _challenge_current_details(self, interaction):
+        """已在关卡详情页启动任务: 直接开始当前选中的难度, 无需回列表选关。
+
+        v1.5.16: 玩家手动打开某个关卡页面后直接跑任务, 不再要求必须停在列表页。
+        难度以详情页当前选中的为准(OCR 识别"简单/困难"), 避免误切难度。
+        """
+        difficulty = None
+        for name in ("困难", "简单"):
+            if self.ocr(.68, .125, .96, .181, match=re.compile(name + r"$")):
+                difficulty = name
+                break
+        if difficulty is None:
+            raise ChallengeFailed("无法识别关卡页面当前选中的难度。")
+        self._start_and_play(interaction, difficulty, f"关卡页面直接开始 · {difficulty}")
 
     def run(self):
         # 云游戏出错时原地重跑整个关卡扫描流程。这里不刷新页面:
@@ -185,13 +204,25 @@ class RahaiBlocksTask(BaseTask):
         if not self.is_browser() and (not self.hwnd or not self.hwnd.exists):
             raise FatalTaskError("拉海洛方块需要处于前台的 Windows PC 客户端。")
         stages = self.wait_until(self._stage_list, time_out=5)
-        if not stages:
-            raise FatalTaskError("请先打开简体中文的「拉海洛方块·逆转」活动关卡列表。")
         interaction = self._make_interaction()
         if not self._clickable(interaction):
             self.hwnd.bring_to_front()
             if not self.wait_until(lambda: self._clickable(interaction), time_out=3):
                 raise FatalTaskError("请将鸣潮窗口切到前台后再次启动任务。")
+
+        if not stages:
+            # v1.5.16: 支持直接在关卡详情页启动 —— 先把当前选中的难度打完,
+            # 然后回列表继续扫描其余关卡; 失败只警告, 不中断后续扫描。
+            if self.wait_until(self._stage_details, time_out=3):
+                self.log_info("当前已在关卡页面，直接开始当前选中的难度。")
+                try:
+                    self._challenge_current_details(interaction)
+                except ChallengeFailed as exc:
+                    self.log_warning(f"关卡页面直接开始失败：{exc}")
+                stages = self._return_to_list()
+            else:
+                raise FatalTaskError(
+                    "请先打开简体中文的「拉海洛方块·逆转」活动关卡列表或任一关卡详情页。")
 
         stages = self._first_page(interaction, stages)
         attempted = set()
