@@ -110,6 +110,11 @@ OK_UID_COVER_JS = '''() => {
   return true;
 }'''
 
+# UID 遮罩的像素级尺寸(相对帧): 与 PC 端 OverlayWidget.paint_uid_cover
+# 的 bottom-right 13% x 2.5% 一致, 也与 OK_UID_COVER_JS 的 13vw x 2.5vh 对应。
+UID_COVER_WIDTH = 0.13
+UID_COVER_HEIGHT = 0.025
+
 
 class BrowserCaptureMethod(BaseCaptureMethod):
     """Run the target page in a Playwright-controlled system browser and capture it.
@@ -147,6 +152,8 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         self.latest_frame = None
         self.wgc_capture = None
         self.capture_mode = config.get('capture', 'wgc')
+        # UID 遮罩: DOM 覆盖层(窗口可见) + 帧像素遮罩(WebRTC/截图帧一致), 同一开关。
+        self._cover_uid = config.get('cover_uid', True)
         self._webrtc = None
         self._tap_offset = (0.0, 0.0)
         self._next_tap_check = 0.0
@@ -290,8 +297,7 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         if background_input:
             # OK-WW BACKGROUND INPUT PATCH: keep the cloud game accepting input when unfocused.
             await self.browser.add_init_script(script=f'({OK_BACKGROUND_JS})()')
-        cover_uid = self.config.get('cover_uid', True)
-        if cover_uid:
+        if self._cover_uid:
             # OK-WW UID COVER PATCH: hide the bottom-right UID region (cloud WW).
             await self.browser.add_init_script(script=f'({OK_UID_COVER_JS})()')
 
@@ -526,6 +532,23 @@ class BrowserCaptureMethod(BaseCaptureMethod):
         if frame is not None and source != self._frame_source:
             logger.info(f'BrowserCaptureMethod capturing from {source}')
             self._frame_source = source
+        return self._apply_uid_cover(frame)
+
+    def _apply_uid_cover(self, frame):
+        """把 UID 遮罩画到帧上(像素级), 兼容 WebRTC 与截图两种捕获源。
+
+        WebRTC 模式直接读取页面视频流的解码帧, 不经过页面合成, 所以
+        OK_UID_COVER_JS 注入的 DOM 覆盖层不会出现在帧里 —— 截图/日志会
+        泄露右下角 UID(遮罩失效)。这里按与 PC 端相同的比例(右下 13% x 2.5%)
+        直接涂黑帧像素, 两种捕获源输出一致; 覆盖层本身仍保留, 让浏览器
+        窗口里也看不到 UID。
+        """
+        if frame is None or not getattr(self, '_cover_uid', True):
+            return frame
+        height, width = frame.shape[:2]
+        bar_w = max(1, round(width * UID_COVER_WIDTH))
+        bar_h = max(1, round(height * UID_COVER_HEIGHT))
+        frame[height - bar_h:, width - bar_w:] = 0
         return frame
 
     def _webrtc_frame(self):
