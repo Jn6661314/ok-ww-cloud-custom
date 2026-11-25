@@ -34,6 +34,7 @@ PLAN = [
     ('v1.4.0', 'v1.4.0 · 安卓独立每日任务 / 大世界判定 / 黑帧与断线弹窗处理 / 索拉指南定位', 'ade8d15'),
     ('v1.5.0', 'v1.5.0 · 梦魇聚落传送按钮 OCR / 登录黑屏冗余等待 / 安卓启动拉起鸣潮', '8ccfedf'),
     ('v1.5.1', 'v1.5.1 · 修复全新安装装不全导致的启动失败 / Fix fresh install missing most files', 'HEAD'),
+    ('v1.5.2', 'v1.5.2 · 修复 MuMu/安卓端无法自动战斗 / Fix MuMu Android auto-combat crash', '2463fd3'),
 ]
 
 
