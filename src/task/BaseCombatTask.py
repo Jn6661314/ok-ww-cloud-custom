@@ -19,6 +19,15 @@ from src.task.BaseWWTask import isolate_white_text_to_black, binarize_for_matchi
 logger = Logger.get_logger(__name__)
 cd_regex = re.compile(r'\d{1,2}\.\d')
 
+# 手游(MuMu/安卓)协奏环检测框: 元素图标中心实测 (0.388, 0.917)@1920x1080,
+# 图标直径约 70px(PC 约 50px), 协奏弧贴在图标外沿(半径约 37~42px@1920)。
+# PC 框(1431,1942,1557,2068)@3840 的环带半径只有 22~27px@1920, 在手游上
+# 完全扫不到弧 -> current_con 恒 0 -> 延奏(has_intro)永远不触发, 表现为
+# "不切人/不触发延奏"。安卓端改用以手游图标为中心的大框: 环带半径
+# 0.351~0.423 * 框高(210px@3840) = 36.9~44.4px@1920, 恰好覆盖协奏弧,
+# 且元素图标本体(半径 35px)落在环带内孔里, 不会被误计成弧。
+ANDROID_CON_BOX = (1385, 1875, 1595, 2085)  # (x1, y1, x2, y2) @3840x2160
+
 
 class NotInCombatException(Exception):
     """未处于战斗状态异常。"""
@@ -1117,20 +1126,28 @@ class BaseCombatTask(CombatCheck):
         if not in_team:
             return
         previous_char_identity = self._char_identity(self.chars)
-        # self.log_info('load chars')
-        self.chars[0] = get_char_by_pos(self, self.get_box_by_name('box_char_1'), 0, safe_get(self.chars, 0))
-        self.chars[1] = get_char_by_pos(self, self.get_box_by_name('box_char_2'), 1, safe_get(self.chars, 1))
-
-        if count == 3:
-            new_char = get_char_by_pos(self, self.get_box_by_name('box_char_3'), 2, safe_get(self.chars, 2))
-            if len(self.chars) == 2:
-                self.chars.append(new_char)
-            else:
-                self.chars[2] = new_char
+        if self.is_adb():
+            # 安卓端: 编队锁定/手填编队优先 —— 手游右上角是圆形头像(比 PC 大约
+            # 1.7 倍), PC 头像模板固定尺度直接匹配必然弱匹配(实测同一队 2 秒内
+            # 读出 4 种组合, char_type 乱漂导致切人/奶妈逻辑全废)。锁定后完全
+            # 跳过画面识别(用户要求"编队为准、战斗期间不识别")。
+            if not self.load_chars_android(current_index):
+                return
         else:
-            if len(self.chars) == 3:
-                self.chars = self.chars[:2]
-                logger.info(f'team size changed to 2')
+            # self.log_info('load chars')
+            self.chars[0] = get_char_by_pos(self, self.get_box_by_name('box_char_1'), 0, safe_get(self.chars, 0))
+            self.chars[1] = get_char_by_pos(self, self.get_box_by_name('box_char_2'), 1, safe_get(self.chars, 1))
+
+            if count == 3:
+                new_char = get_char_by_pos(self, self.get_box_by_name('box_char_3'), 2, safe_get(self.chars, 2))
+                if len(self.chars) == 2:
+                    self.chars.append(new_char)
+                else:
+                    self.chars[2] = new_char
+            else:
+                if len(self.chars) == 3:
+                    self.chars = self.chars[:2]
+                    logger.info(f'team size changed to 2')
 
         apply_team_char_classes(self, self.chars)
 
@@ -1163,6 +1180,36 @@ class BaseCombatTask(CombatCheck):
     @staticmethod
     def _char_identity(chars):
         return tuple((char.char_name, char.name) if char is not None else None for char in chars)
+
+    def load_chars_android(self, current_index):
+        """安卓端角色加载: 编队锁定优先, 失败时退回上游 PC 框模板识别。
+
+        身份来源优先级:
+          1. 全局配置 'MuMu/安卓 Config'->'MuMu 编队'(用户手填, 编队为准);
+          2. 投票锁定的编队(队伍栏缩放识别, 连续一致后锁定);
+          3. 首次无锁定时先做一次缩放识别并投票, 多数票先顶上;
+          4. 全部失败 -> 退回上游 get_char_by_pos(PC 框)老行为, 保证战斗不中断。
+        """
+        identity = self.android_locked_team_identity()
+        if identity is None:
+            identity = self.android_detect_team_identity()
+        if identity and len([name for name in identity if name]) >= 2:
+            if self.android_build_chars_from_identity(tuple(identity), current_index):
+                return True
+        # 兜底: 上游老路径(PC box_char 框模板识别)。手游头像比 PC 大约 1.7 倍,
+        # 这条路径识别会抖动, 但至少保持战斗可用, 且仍能拿到技能/键位信息。
+        self.chars[0] = get_char_by_pos(self, self.get_box_by_name('box_char_1'), 0, safe_get(self.chars, 0))
+        self.chars[1] = get_char_by_pos(self, self.get_box_by_name('box_char_2'), 1, safe_get(self.chars, 1))
+        count = self.android_team_size()
+        if count == 3:
+            new_char = get_char_by_pos(self, self.get_box_by_name('box_char_3'), 2, safe_get(self.chars, 2))
+            if len(self.chars) == 2:
+                self.chars.append(new_char)
+            else:
+                self.chars[2] = new_char
+        elif len(self.chars) == 3:
+            self.chars = self.chars[:2]
+        return True
 
     @staticmethod
     def should_update(the_char, old_char):
@@ -1238,6 +1285,10 @@ class BaseCombatTask(CombatCheck):
         Returns:
             Box: 盒子对象。
         """
+        if self.is_adb():
+            x1, y1, x2, y2 = ANDROID_CON_BOX
+            return self.box_of_screen_scaled(3840, 2160, x1, y1, x2, y2, name='con_full_android',
+                                             hcenter=True)
         return self.box_of_screen_scaled(3840, 2160, 1431, 1942, 1557, 2068, name='con_full',
                                          hcenter=True)
 

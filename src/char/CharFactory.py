@@ -234,6 +234,81 @@ def get_char_by_pos(task, box, index, old_char):
     return BaseChar(task, index, char_name=name)
 
 
+def build_char_by_canonical(task, canonical_name, index, old_char):
+    """按已知 canonical 名直接构建/复用角色对象(不走画面模板匹配)。
+
+    MuMu/安卓端编队锁定后使用: 编队里每个槽位的角色是已知的, 无需每帧
+    模板匹配 —— 与 get_char_by_pos 一致, 同名类复用旧实例(保留战斗状态)。
+    """
+    info = char_dict.get(canonical_name)
+    if not info:
+        return old_char
+    cls = info.get('cls')
+    if old_char is not None and old_char.name == cls.__name__:
+        return _apply_char_config(task, old_char, info)
+    return _apply_char_config(task, cls(task, index, char_name=info['canonical_name'],
+                                        confidence=1.0,
+                                        ring_index=info.get('ring_index', -1),
+                                        char_type=_get_char_type(task, info),
+                                        buff_time=_get_buff_time(task, info)), info)
+
+
+def canonical_display_name(canonical):
+    """把 canonical 名(Labels 模板名)转成英文官方角色名, 用于日志显示。"""
+    info = char_dict.get(canonical)
+    if not info:
+        return str(getattr(canonical, 'value', canonical))
+    cls_name = info['cls'].__name__
+    try:
+        # mismatched_names 定义在 BaseCombatTask; 局部导入避免模块级循环依赖
+        from src.task.BaseCombatTask import mismatched_names
+        return mismatched_names.get(cls_name, cls_name)
+    except Exception:
+        return cls_name
+
+
+def resolve_char_alias(task, token):
+    """把用户输入的角色名(中文/英文/别名)解析为 canonical 名, 失败返回 None。
+
+    canonical 名是 Labels 模板名(如 Labels.char_hiyuki, 值 'char_hiyuki')。
+    匹配顺序: 类名/官方名/翻译名(中文)精确 -> 包含关系。手填编队时用户
+    可以写 绯雪 / Hiyuki / 漂泊者·衍射 / Rover: Spectro 等。
+    """
+    token = str(token or '').strip().casefold().replace(' ', '')
+    if not token:
+        return None
+    aliases = getattr(task, '_android_name_alias_cache', None)
+    if aliases is None:
+        aliases = {}
+        try:
+            # mismatched_names 定义在 BaseCombatTask; 局部导入避免循环依赖
+            from src.task.BaseCombatTask import mismatched_names
+        except Exception:
+            mismatched_names = {}
+        for canonical, info in char_dict.items():
+            cls_name = info['cls'].__name__
+            official = mismatched_names.get(cls_name, cls_name)
+            names = {str(canonical), cls_name, official}
+            for name in list(names):
+                try:
+                    translated = task.tr(name)
+                    if translated and translated != name:
+                        names.add(translated)
+                except Exception:
+                    pass
+            for name in names:
+                key = str(name).casefold().replace(' ', '')
+                if key and key not in aliases:
+                    aliases[key] = canonical
+        setattr(task, '_android_name_alias_cache', aliases)
+    if token in aliases:
+        return aliases[token]
+    for key, canonical in aliases.items():
+        if len(token) >= 2 and (token in key or key in token):
+            return canonical
+    return None
+
+
 def apply_team_char_classes(task, chars):
     """Apply custom code only after the complete three-character team is known.
 

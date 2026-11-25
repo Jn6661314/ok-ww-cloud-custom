@@ -8,6 +8,7 @@ import numpy as np
 
 from ok import BaseTask, Logger, find_boxes_by_name, og, find_color_rectangles, mask_white, Box
 from ok import CannotFindException
+from ok import safe_get
 from ok.task.exceptions import WaitFailedException
 import cv2
 
@@ -59,6 +60,27 @@ ANDROID_BOOK_TAB_FEATURES = ('gray_book_quest', 'gray_book_boss', 'gray_book_wee
 # 绝不能发 3 键 —— 模拟器键位映射里没有绑定, 发了等于没按,
 # 切到 3 号位就会永远失败并在 10 秒后中断战斗。
 ANDROID_SWITCH_KEYS = ('1', '2')
+# ---- 安卓编队锁定 (v1.5.13) --------------------------------------------
+# 手游右上角队伍栏是圆形头像, 直径约 110px@1920x1080, 是 PC 端头像(约 64px)
+# 的 1.7 倍。PC 头像模板(char_*)固定尺度直接匹配必然弱匹配 —— 实测同一队
+# 2 秒内读出 4 种组合(漂泊者/渊武/仇远/绯雪乱串), char_type 随之漂移,
+# 切人优先级/奶妈逻辑全废。
+# 修复分三层:
+#   1) 全局配置 'MuMu/安卓 Config'->'MuMu 编队' 手填角色名(最高优先级, 零识别);
+#   2) 自动: 把队伍栏裁剪后缩放 0.58 倍到 PC 头像尺度再模板匹配(命中率高);
+#   3) 连续 ANDROID_TEAM_LOCK_MIN_VOTES 次识别一致才锁定; 锁定后 load_chars
+#      完全跳过模板匹配(战斗期间零 OCR, 响应"编队为准、战斗期不识别")。
+ANDROID_TEAM_BAR_BOX = (0.850, 0.185, 0.970, 0.620)  # 队伍栏整体区域 (x1,y1,x2,y2)
+ANDROID_TEAM_BAR_SCALE = 0.58  # 手游头像缩放到 PC 头像尺度的系数
+# 每个编队槽位的头像中心 y(相对全屏)。实测 2 人队头像中心 y=0.259/0.403,
+# 间距 0.144, 3 号位按同间距外推; 头像中心 x=0.909。
+ANDROID_CHAR_SLOT_CENTER_Y = (0.259, 0.403, 0.547)
+ANDROID_TEAM_VOTE_WINDOW = 7  # 投票窗口(最近 N 次识别)
+ANDROID_TEAM_LOCK_MIN_VOTES = 3  # 连续一致次数达到即锁定
+ANDROID_TEAM_RECHECK_INTERVAL = 15  # 已锁定后复检间隔(秒), 用于自动跟随换队
+# 自动识别阈值: 手游头像构图与 PC 模板不同, 低阈值必然张冠李戴(实测 0.6 时
+# 同一队读出 渊武/仇远/漂泊者 乱串), 提到 0.72 只接受高置信匹配。
+ANDROID_DETECT_THRESHOLD = 0.72
 f_white_color = {
     'r': (235, 255),  # Red range
     'g': (235, 255),  # Green range
@@ -79,6 +101,8 @@ class BaseWWTask(BaseTask):
         self.monthly_card_config = self.get_global_config('Monthly Card Config')
         self.char_config = self.get_global_config('Character Config')
         self.key_config = self.get_global_config('Game Hotkey')  # 游戏热键配置
+        # MuMu/安卓编队(可选, 用户手填则"编队为准"完全跳过画面识别)
+        self.android_config = self.get_global_config('MuMu/安卓 Config')
         self.next_monthly_card_start = 0
         self.scene: WWScene | None = None
         # 安卓触屏/PC/云 语义操作统一入口(返回与打开菜单在触屏是同一个按钮)
@@ -1292,11 +1316,14 @@ class BaseWWTask(BaseTask):
         return current_direction, current_adjust, False
 
     def android_team_size(self):
-        """安卓端编队人数: 以配置的编队(已加载的角色)为准, 默认 3 人队。
+        """安卓端编队人数: 编队锁定/手填编队优先, 其次按已加载角色数, 默认 3 人队。
 
         不在战斗期间做画面 OCR 识别(用户要求): 技能特效/伤害数字会干扰
         队伍栏徽章识别, 造成误判。编队页配置几个人就是几人队。
         """
+        identity = self.android_locked_team_identity()
+        if identity:
+            return len(identity)
         chars = getattr(self, 'chars', None) or []
         try:
             loaded = len([c for c in chars if c is not None])
@@ -1305,6 +1332,171 @@ class BaseWWTask(BaseTask):
         if loaded >= 2:
             return min(loaded, 3)
         return 3
+
+    # ---- 安卓编队锁定 (v1.5.13) --------------------------------------------
+
+    def android_configured_team(self):
+        """读取全局配置里手填的 'MuMu 编队', 返回 canonical 名元组或 None。
+
+        支持中文名/英文名(如 绯雪,漂泊者·衍射,渊武 / Hiyuki,Rover: Spectro,Yuanwu),
+        按编队槽位顺序填写, 2-3 人。填了就是唯一事实来源, 完全不做画面识别。
+        """
+        raw = ''
+        try:
+            cfg = getattr(self, 'android_config', None) or {}
+            raw = str(cfg.get('MuMu 编队') or '')
+        except Exception:
+            raw = ''
+        if not raw.strip():
+            return None
+        from src.char.CharFactory import resolve_char_alias
+        names = []
+        for token in raw.replace('，', ',').replace('、', ',').split(','):
+            canonical = resolve_char_alias(self, token)
+            if canonical is None:
+                if token.strip():
+                    self.log_warning(f'编队配置里的角色名无法识别: {token!r}, 忽略手填编队')
+                return None
+            names.append(canonical)
+        if len(names) in (2, 3):
+            return tuple(names)
+        if names:
+            self.log_warning(f'编队配置需要 2-3 个角色, 实际 {len(names)} 个, 忽略手填编队')
+        return None
+
+    def android_team_bar_snapshot(self):
+        """把手游右上角队伍栏缩放到 PC 头像尺度(不做逐帧模板匹配的预处理)。
+
+        手游圆形头像直径约 110px@1920x1080, 是 PC 头像(约 64px)的 1.7 倍,
+        PC 头像模板(char_*)固定尺度直接匹配必然弱匹配。把队伍栏区域缩小
+        ANDROID_TEAM_BAR_SCALE 倍后贴回同尺寸黑画布 —— 画布尺寸与主帧一致,
+        避免触发 FeatureSet.check_size 清空特征缓存; 头像位置按缩小后实际
+        坐标计算搜索框。
+
+        返回 (画布, [每个槽位的搜索框 Box(画布坐标)])。识别失败返回 (None, [])。
+        """
+        frame = self.executor.nullable_frame()
+        if frame is None:
+            return None, []
+        sw, sh = self.screen_width, self.screen_height
+        x1, y1, x2, y2 = ANDROID_TEAM_BAR_BOX
+        px1, py1 = int(x1 * sw), int(y1 * sh)
+        px2, py2 = int(x2 * sw), int(y2 * sh)
+        crop = frame[py1:py2, px1:px2]
+        if crop.size == 0:
+            return None, []
+        scale = ANDROID_TEAM_BAR_SCALE
+        small = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        canvas = np.zeros_like(frame)
+        ch, cw = small.shape[:2]
+        canvas[py1:py1 + ch, px1:px1 + cw] = small
+        boxes = []
+        half = int(40 * sh / 1080)  # 搜索框半径: 缩放后头像半径约 32px + 余量
+        center_x = px1 + (0.909 * sw - px1) * scale
+        for slot_y in ANDROID_CHAR_SLOT_CENTER_Y:
+            center_y = py1 + (slot_y * sh - py1) * scale
+            boxes.append(Box(center_x - half, center_y - half, half * 2, half * 2,
+                             name='android_char_slot'))
+        return canvas, boxes
+
+    def android_detect_team_identity(self):
+        """在缩放后的队伍栏画布上识别各槽位角色并投票。
+
+        手游头像是"整个头部"圆形构图, PC 模板是"脸部特写"裁剪, 模板匹配天然
+        不如 PC 端可靠(实测最高 0.7~0.9 且偶有张冠李戴), 因此:
+          - 阈值提到 ANDROID_DETECT_THRESHOLD(0.72), 低于阈值的槽位记 None;
+          - 投票锁定由 android_vote_team_identity 把关(连续一致才锁)。
+        返回锁定/多数票身份元组(可含 None 槽位), 完全失败返回 None。
+        """
+        canvas, boxes = self.android_team_bar_snapshot()
+        if canvas is None or not boxes:
+            return None
+        from src.char.CharFactory import char_names
+        found = []
+        for box in boxes:
+            matched = self.find_best_match_in_box(box, char_names, self.ANDROID_DETECT_THRESHOLD,
+                                                  frame=canvas)
+            found.append(matched.name if matched else None)
+        self.log_debug(f'android team bar detect: {found}')
+        if not any(found):
+            return None
+        return self.android_vote_team_identity(tuple(found))
+
+    def android_vote_team_identity(self, identity):
+        """对一次识别结果投票; 连续一致达到阈值时锁定编队。
+
+        - 已锁定时: 仅当最近 N 次投票连续一致且与锁定不同才换锁(自动跟随换队);
+          战斗特效造成的偶发误读在连续一致门槛下无法撼动锁定。
+        - 未锁定时: 连续一致达到阈值即锁定; 否则返回多数票兜底。
+        """
+        from collections import Counter, deque
+        votes = getattr(self, '_android_team_votes', None)
+        if votes is None:
+            votes = deque(maxlen=ANDROID_TEAM_VOTE_WINDOW)
+            self._android_team_votes = votes
+        votes.append(identity)
+        recent = list(votes)[-ANDROID_TEAM_LOCK_MIN_VOTES:]
+        stable = len(recent) >= ANDROID_TEAM_LOCK_MIN_VOTES and all(
+            v == recent[0] for v in recent)
+        lock = getattr(self, '_android_team_lock', None)
+        if stable and recent[0] is not None and any(recent[0]):
+            if recent[0] != lock:
+                from src.char.CharFactory import canonical_display_name
+                shown = ', '.join(canonical_display_name(n) for n in recent[0])
+                message = f'安卓编队锁定: {shown}'
+                if lock:
+                    message += f' (原: {", ".join(canonical_display_name(n) for n in lock)})'
+                self.log_info(message)
+            self._android_team_lock = recent[0]
+            self._android_team_recheck_at = time.time()
+            return recent[0]
+        if lock is not None:
+            return lock
+        counts = Counter(v for v in votes if v and any(v))
+        if counts:
+            return counts.most_common(1)[0][0]
+        return None
+
+    def android_locked_team_identity(self):
+        """当前生效的编队身份: 手填配置 > 投票锁定。
+
+        锁定已存在且明确不在战斗中(scene.in_combat is False)时, 每
+        ANDROID_TEAM_RECHECK_INTERVAL 秒复检一次, 用户换队后自动重锁(自恢复);
+        战斗中或战斗状态未知时完全不复检(用户要求战斗期间不识别)。
+        """
+        configured = self.android_configured_team()
+        if configured:
+            return configured
+        lock = getattr(self, '_android_team_lock', None)
+        if lock is None:
+            return None
+        scene = getattr(self, 'scene', None)
+        if scene is None or scene.in_combat is not False:
+            return lock  # 战斗中/状态未知: 绝不识别(用户要求)
+        now = time.time()
+        if now - getattr(self, '_android_team_recheck_at', 0) < ANDROID_TEAM_RECHECK_INTERVAL:
+            return lock
+        self._android_team_recheck_at = now
+        self.log_debug('android team lock recheck')
+        self.android_detect_team_identity()
+        return getattr(self, '_android_team_lock', None)
+
+    def android_build_chars_from_identity(self, identity, current_index):
+        """按编队身份直接构建角色列表(不做画面识别), 返回是否成功。
+
+        身份元组里允许 None 槽位(该槽保留旧角色对象), 但至少要能构建 2 个角色。
+        """
+        from src.char.CharFactory import build_char_by_canonical
+        if not identity:
+            return False
+        old_chars = list(getattr(self, 'chars', None) or [None, None, None])
+        built = []
+        for i, canonical in enumerate(identity):
+            built.append(build_char_by_canonical(self, canonical, i, safe_get(old_chars, i)))
+        if len([c for c in built if c is not None]) < 2:
+            return False
+        self.chars = built
+        return True
 
     def android_switch_key(self, index, exclude=()):
         """安卓端按编队槽位取实际切换键; PC/云仍用 index+1 的原有约定。

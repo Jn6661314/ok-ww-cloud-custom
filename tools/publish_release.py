@@ -45,6 +45,7 @@ PLAN = [
     ('v1.5.10', 'v1.5.10 · 修复 MuMu 打着打着不打了（重锁定耐心/重试/黑帧保护）/ Fix MuMu combat stopping unexpectedly (patient retarget, retry, black-frame guard)', 'HEAD'),
     ('v1.5.11', 'v1.5.11 · 修复 MuMu 切人（只用 1/2 键 / 动态映射 / 发键后核实）/ Fix MuMu character switching (keys 1/2 only, dynamic mapping, post-press verification)', 'HEAD'),
     ('v1.5.12', 'v1.5.12 · 修复声骸副本炸每日任务 + 队伍识别以编队为准 / Fix Tacet crash killing daily task + formation-based team identification', 'HEAD'),
+    ('v1.5.13', 'v1.5.13 · 安卓编队锁定 + 协奏环（延奏）识别修复 / Android formation lock + concerto ring (outro) fix', 'HEAD'),
 ]
 
 
