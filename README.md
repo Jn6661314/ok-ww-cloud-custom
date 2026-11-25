@@ -1,3 +1,7 @@
+## 最简单的安装方法：让 Agent 帮你快速安装
+
+不想手动操作？把 [`AGENT_INSTALL_PROMPT.md`](AGENT_INSTALL_PROMPT.md) 里的整段提示词复制给你常用的 Agent（WorkBuddy / Claude / Cursor 等），它会自动检查环境、关闭软件、运行安装脚本并验证任务是否出现。提示词已包含"不覆盖 Cookie / 账号配置 / 自定义队伍"的约束。
+
 ## 更新日志
 
 按**日**汇总，完整改动明细见 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases)（中英双语）。
@@ -95,9 +99,7 @@
 - 安装/恢复脚本只覆盖定制源码文件，**不会**改动你的 Cookie 或任务配置。
 - 工坊快照只包含社区公开分享的队伍代码，不含任何个人登录信息。
 
-## 让 Agent 帮你快速安装
 
-不想手动操作？把 [`AGENT_INSTALL_PROMPT.md`](AGENT_INSTALL_PROMPT.md) 里的整段提示词复制给你常用的 Agent（WorkBuddy / Claude / Cursor 等），它会自动检查环境、关闭软件、运行安装脚本并验证任务是否出现。提示词已包含"不覆盖 Cookie / 账号配置 / 自定义队伍"的约束。
 
 ## 安装
 
