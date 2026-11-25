@@ -26,8 +26,8 @@ from ok import Logger
 
 logger = Logger.get_logger(__name__)
 
-# 与 config.py 中的 ConfigOption 名称保持一致
-STREAM_CONFIG_NAME = '远控/串流窗口(试验性)'
+# 与 config.py 中的 ConfigOption 名称保持一致(不要带 "/", 否则配置会落到子目录里)
+STREAM_CONFIG_NAME = '远控串流窗口(试验性)'
 
 
 def stream_window_settings(global_config):

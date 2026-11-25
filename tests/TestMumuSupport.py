@@ -41,7 +41,13 @@ class ConfigTest(unittest.TestCase):
 
     def test_android_team_config_option_registered(self):
         names = [option.name for option in config.config['global_configs']]
-        self.assertIn('MuMu/安卓 Config', names)
+        self.assertIn('MuMu 安卓 Config', names)
+
+    def test_global_config_names_have_no_slash(self):
+        # 框架按 ``configs/<名称>.json`` 存配置, 名称里的 "/" 会被当成目录分隔符,
+        # 于是落到 configs/远控/串流窗口.json 这种子目录里(踩过)。
+        for option in config.config['global_configs']:
+            self.assertNotIn('/', option.name, f'全局配置名不能含斜杠: {option.name!r}')
 
     def test_daily_task_registered_only_once(self):
         # 官方 v3.8.15 的设计：一个 DailyTask 按设备自动区分操作，不能注册两次

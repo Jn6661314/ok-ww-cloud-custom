@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.1', 'v1.8.1 · 修正远控/串流窗口入口位置 + 配置名含斜杠 / Fix remote-window page entry & slash in config names', 'HEAD'),
     ('v1.8.0', 'v1.8.0 · 试验性：把远控/串流软件窗口当作 PC 设备 / Experimental: remote-control & streaming windows as a PC device', 'HEAD'),
     ('v1.7.0', 'v1.7.0 · MuMu / 安卓模拟器支持合并回官方 v3.8.15 基线 / Merge MuMu support into official v3.8.15', 'HEAD'),
     ('v1.6.0', 'v1.6.0 · 以官方 v3.8.15 为基线重建 + 无尽模式 / Rebase onto official v3.8.15 with Endless Mode', 'HEAD'),
