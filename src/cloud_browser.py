@@ -17,6 +17,7 @@ so it can also be imported from ``config.py`` before the GUI is up.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 CONFIG_FOLDER = Path('configs')
@@ -123,24 +125,61 @@ def _write_marker(profile: Path, account_key: str | None) -> None:
         print(f'cloud_browser: failed to write profile marker: {error}', file=sys.stderr)
 
 
+_REPLACE_RETRIES = 8
+_REPLACE_DELAY = 0.4
+
+
 def _replace_dir(source: Path, target: Path) -> None:
-    """Move ``source`` onto ``target``, replacing it (same volume: rename only)."""
+    """Move ``source`` onto ``target``, replacing it.
+
+    Chromium keeps profile files locked for a while after ``close()`` returns.
+    Never delete a locked target to work around that: the old behaviour wiped
+    whatever it could and left a half-written profile behind, which is another
+    way a browser restart appeared to "lose" the account.  Retry the rename,
+    roll back if the old profile was already moved aside, and fail loudly if
+    the profile cannot be swapped safely.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        retired = target.with_name(target.name + '.retired')
+    retired = target.with_name(target.name + '.retired')
+    last_error: OSError | None = None
+    for attempt in range(_REPLACE_RETRIES):
+        try:
+            if retired.exists():
+                shutil.rmtree(retired)
+            if target.exists():
+                os.replace(target, retired)
+            os.replace(source, target)
+        except OSError as error:
+            last_error = error
+            # If the old profile was moved aside but the new one could not be
+            # moved in, put it back instead of leaving it under .retired.
+            if retired.exists() and not target.exists():
+                try:
+                    os.replace(retired, target)
+                except OSError:  # pragma: no cover - still locked
+                    pass
+            if error.errno == errno.EXDEV:
+                break
+            if attempt + 1 < _REPLACE_RETRIES:
+                time.sleep(_REPLACE_DELAY)
+                continue
+        else:
+            if retired.exists():
+                shutil.rmtree(retired, ignore_errors=True)
+            return
+
+    if last_error is not None and last_error.errno == errno.EXDEV:
+        # source/target on different volumes: target was moved aside, so the
+        # copy creates a complete new profile before we delete the old one.
+        shutil.copytree(source, target)
         if retired.exists():
             shutil.rmtree(retired, ignore_errors=True)
-        try:
-            os.replace(target, retired)
-        except OSError:  # pragma: no cover - target locked by a running browser
-            shutil.rmtree(target, ignore_errors=True)
-        else:
-            shutil.rmtree(retired, ignore_errors=True)
-    try:
-        os.replace(source, target)
-    except OSError:  # pragma: no cover - cross-volume fallback
-        shutil.copytree(source, target, dirs_exist_ok=True)
         shutil.rmtree(source, ignore_errors=True)
+        return
+
+    raise RuntimeError(
+        f'cloud_browser: cannot swap browser profile {source} -> {target}: {last_error}'
+    ) from last_error
 
 
 def live_profile_account() -> str | None:
@@ -151,6 +190,20 @@ def live_profile_account() -> str | None:
 def profile_matches(account_key: str | None) -> bool:
     """True when ``cache/playwright`` already holds ``account_key``'s login state."""
     return bool(account_key) and LIVE_PROFILE.is_dir() and live_profile_account() == account_key
+
+
+def resolve_account(account_key: str | None = None) -> str | None:
+    """Which account owns the login state we are about to use.
+
+    Error recovery/restart paths call ``restart_browser`` without an explicit
+    account.  Guessing ``default`` there swaps in an unrelated (often empty)
+    profile and logs the user out.  The marker inside the live profile is the
+    authority on which cookies are actually loaded; ``cloud_browser.json`` is
+    the fallback when the marker has not been written yet.
+    """
+    if account_key:
+        return str(account_key)
+    return live_profile_account() or get_active_account()
 
 
 def prepare_live_profile(account_key: str | None) -> bool:
@@ -296,7 +349,10 @@ def save_current(task=None, account_key: str | None = None) -> bool:
     capture = get_browser_capture(task)
     if capture is None:
         return False
-    account = account_key or get_active_account() or live_profile_account()
+    # Prefer the profile that is actually open: cloud_browser.json can be
+    # updated ahead of the live profile (cloud_launch --account X), and saving
+    # X's cookies under that stale id would give the wrong account a snapshot.
+    account = resolve_account(account_key)
     result = _run(capture, _save_async(capture, storage_state_path(account)))
     if not result:
         return False
@@ -336,11 +392,17 @@ def restart_browser(task=None, account_key=None, save_previous=True) -> bool:
         print('cloud_browser: no device manager available, cannot restart browser', file=sys.stderr)
         return False
 
+    # Resolve before closing the browser: error recovery calls us without an
+    # account, and loading `default` there would silently log the active
+    # account out.  save_current() still snapshots whichever account is live
+    # right now, not the one we are switching to.
+    account = resolve_account(account_key)
+
     if save_previous:
         save_current(task)
 
     _close_capture(manager)
-    prepare_live_profile(account_key)
+    prepare_live_profile(account)
 
     try:
         from ok.device.capture import BrowserCaptureMethod

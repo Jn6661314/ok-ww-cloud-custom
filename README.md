@@ -21,6 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ### 2026-11-26
 
+- **[v1.8.6](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.6)** — **修复重启任务偶尔丢失云鸣潮账号登录态**：任务出错自动恢复时 `restart_browser()` 没收到账号，内部把 `None` 当成 `default`，结果把当前账号的 profile 存好后却装回磁盘上遗留的 `default` profile，`active_account` 也被改写，表现为「重启后账号掉了」。现在以 live profile 的归属标记为准（`resolve_account()`），错误恢复显式传账号；profile 目录被 Chromium 短暂锁住时改为重试 + 失败回滚，不再静默删 Cookie 文件。新增 6 项回归测试（旧代码全挂），全量 249 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**，已有 profile 不受影响。
 - **[v1.8.5](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.5)** — **两套 Agent 安装提示词**：新增 [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md) 对应真双机版（采集卡 + KMBox Net / SendInput，来自独立项目 okww-dualpc，独立目录安装，不碰现有 ok-ww），原提示词与 README 加分流表。评估后不把双机合并进本分支：它是 6600 行 Python 适配层 + Rust 内核 + Qt 界面的独立实现、基线不同、设备层与其他设备互斥。顺手修正两处过时的 `Done: 15/29 file copies` 文案。仅文档变更，243 项测试通过。
 
 ### 2026-11-25

@@ -116,7 +116,11 @@ def refresh_cloud_game(task, *, wait_ready: bool = True, time_out: int = 600,
     reloaded = False
     if use_browser_restart:
         try:
-            reloaded = bool(cloud_browser.restart_browser(task, save_previous=False))
+            # 必须显式带上当前账号：restart_browser 若猜 default，会把正在用的
+            # profile 换成 default（甚至空目录），表现就是"重启任务后掉登录"。
+            account = cloud_browser.resolve_account()
+            reloaded = bool(cloud_browser.restart_browser(
+                task, account_key=account, save_previous=False))
         except Exception as error:  # pragma: no cover - depends on live browser
             task.log_warning(task.tr('重启浏览器失败：{error}').format(error=error))
             reloaded = False
