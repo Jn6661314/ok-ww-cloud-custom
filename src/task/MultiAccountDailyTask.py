@@ -158,10 +158,21 @@ class MultiAccountDailyTask(WWOneTimeTask, BaseCombatTask):
         }
 
     def _is_cloud_device(self):
+        # 设备列表首次刷新完成前 device_dict 里还没有 browser 项, is_browser()
+        # 会返回 None, 导致云鸣潮下首次进入配置页看不到保存/切换账号按钮。
+        # 这里改为: 有首选设备以它为准; 还没刷出来时只要配置过云浏览器
+        # (browser_config 存在)就先按云设备显示, 刷新完成后以实际设备为准。
         try:
-            return bool(self.is_browser())
+            manager = self.executor.device_manager
         except Exception:
             return False
+        try:
+            preferred = manager.get_preferred_device()
+        except Exception:
+            preferred = None
+        if preferred is not None:
+            return preferred.get('device') == 'browser'
+        return bool(getattr(manager, 'browser_config', None))
 
     def _mark_done(self, account):
         normalized = normalize_account_name(account)

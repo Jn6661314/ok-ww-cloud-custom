@@ -135,6 +135,55 @@ class AdbStartGameTest(unittest.TestCase):
         self.assertEqual(manager.adb_start_package.call_count, 2)
 
 
+class BridgeFallbackCacheTest(unittest.TestCase):
+    """MuMu 网桥 adb 自动发现的结果必须缓存, 否则设备列表刷新被 arp + 逐 IP
+    端口探测拖慢几十秒。"""
+
+    def make_manager(self):
+        import time as _time
+        manager = object.__new__(DeviceManager)
+        manager._bridge_cache = {}
+        manager.BRIDGE_FALLBACK_TTL = DeviceManager.BRIDGE_FALLBACK_TTL
+        manager.adb_connect = Mock(return_value=SimpleNamespace(serial='1.2.3.4:5555'))
+        return manager, _time
+
+    def test_non_mumu_returns_none_without_probing(self):
+        manager, _ = self.make_manager()
+        emulator = SimpleNamespace(name='LDPlayer', path='C:/ld', serial='emulator-5554')
+        with self.manager_no_probe(manager):
+            self.assertIsNone(manager.adb_connect_bridge_fallback(emulator))
+
+    def manager_no_probe(self, manager):
+        return patch('subprocess.run', side_effect=AssertionError('should not probe'))
+
+    def test_cached_success_reused_without_probe(self):
+        manager, clock = self.make_manager()
+        emulator = SimpleNamespace(name='MuMu15', path='C:/mumu', serial='emulator-1')
+        manager._bridge_cache['MuMu15'] = ('1.2.3.4:5555', clock.time())
+        with self.manager_no_probe(manager):
+            device = manager.adb_connect_bridge_fallback(emulator)
+        self.assertIsNotNone(device)
+
+    def test_cached_failure_skips_probe_within_ttl(self):
+        manager, clock = self.make_manager()
+        emulator = SimpleNamespace(name='MuMu15', path='C:/mumu', serial='emulator-1')
+        manager._bridge_cache['MuMu15'] = (None, clock.time())
+        with self.manager_no_probe(manager):
+            self.assertIsNone(manager.adb_connect_bridge_fallback(emulator))
+
+    def test_failed_probe_is_cached_too(self):
+        manager, clock = self.make_manager()
+        emulator = SimpleNamespace(name='MuMu15', path='C:/mumu', serial='emulator-1')
+        with patch('subprocess.run', return_value=SimpleNamespace(stdout=b'')), \
+                patch('ok.device.DeviceManager.socket.create_connection',
+                      side_effect=OSError('refused')):
+            self.assertIsNone(manager.adb_connect_bridge_fallback(emulator))
+        # 失败结论也进了缓存: TTL 内第二次调用不再探测
+        with self.manager_no_probe(manager):
+            self.assertIsNone(manager.adb_connect_bridge_fallback(emulator))
+        self.assertIn('MuMu15', manager._bridge_cache)
+
+
 class AndroidWorldTest(unittest.TestCase):
 
     def test_black_frame_detected_separately(self):

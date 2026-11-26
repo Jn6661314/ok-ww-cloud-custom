@@ -73,6 +73,9 @@ class DeviceManager:
         # 试验性: 把远控/串流软件( UU远程 / ToDesk / 向日葵 / Parsec ... )的窗口当 PC 设备。
         # 打开后 windows 设备不再按"鸣潮客户端 exe + UnrealWindow"匹配, 而是按窗口标题匹配。
         self.stream_window_mode = False
+        # MuMu 网桥模式 adb 自动发现的结果缓存 {模拟器名: (serial or None, 时间戳)}。
+        # 没有缓存时每次设备刷新都会 arp + 逐 IP 端口探测, 把设备列表拖慢几十秒。
+        self._bridge_cache = {}
         self.windows_capture_config = app_config.get('windows')
         self.adb_capture_config = app_config.get('adb')
         self.browser_config = app_config.get('browser')
@@ -300,16 +303,28 @@ class DeviceManager:
         except Exception as e:
             logger.error(f"adb connect error return none {addr}", e)
 
+    # MuMu 网桥 adb 自动发现的探测结果缓存时长(秒)。缓存期内不再做 arp +
+    # 逐 IP 端口探测, 否则设备列表每次刷新都会被拖慢几十秒。
+    BRIDGE_FALLBACK_TTL = 120
+
     def adb_connect_bridge_fallback(self, emulator):
         """MuMu 网桥(bridge)模式回退: 127.0.0.1:adb_port 无人监听时,
         从 ARP 表发现虚拟机的局域网 IP, 尝试其 5555/16384 adb 端口。
 
         MuMu 15 开启网桥后, 模拟器获得独立局域网 IP 且 NAT 端口转发不生效,
         adb 必须连 `<vm_ip>:5555`。IP 由 DHCP 分配、每次开机可能变化,
-        因此每次 refresh 时动态发现, 不落盘。
+        因此动态发现, 但结果缓存 ``BRIDGE_FALLBACK_TTL`` 秒: 缓存期内直接
+        复用上次的 serial(或失败结论), 不再全网探测。
         """
         name_and_path = f"{getattr(emulator, 'name', '')} {getattr(emulator, 'path', '')}".lower()
         if 'mumu' not in name_and_path:
+            return None
+        now = time.time()
+        cached = self._bridge_cache.get(getattr(emulator, 'name', ''))
+        if cached is not None and now - cached[1] < self.BRIDGE_FALLBACK_TTL:
+            serial = cached[0]
+            if serial and self.adb_connect(serial) is not None:
+                return serial
             return None
         try:
             import subprocess
@@ -327,7 +342,7 @@ class DeviceManager:
             for ip in candidates:
                 for port in (5555, 16384):
                     try:
-                        with socket.create_connection((ip, port), timeout=0.4):
+                        with socket.create_connection((ip, port), timeout=0.25):
                             pass
                     except OSError:
                         continue
@@ -335,9 +350,11 @@ class DeviceManager:
                     device = self.adb_connect(serial)
                     if device is not None:
                         logger.info(f'MuMu bridge adb discovered {serial} for {emulator.name}')
+                        self._bridge_cache[emulator.name] = (serial, now)
                         return device
         except Exception as e:
             logger.error(f'MuMu bridge adb fallback error', e)
+        self._bridge_cache[emulator.name] = (None, now)
         return None
 
     def get_devices(self):
