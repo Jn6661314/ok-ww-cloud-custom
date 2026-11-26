@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.8', 'v1.8.8 · 云鸣潮战斗奖励副本出错后现场续打、不重进 / Resume the reward dungeon in place after a cloud error', 'HEAD'),
     ('v1.8.7', 'v1.8.7 · 聚落锁敌兜底 + Moonlight 远控预设 / Settlement lock-on fallback and Moonlight preset', 'HEAD'),
     ('v1.8.6', 'v1.8.6 · 修复重启任务偶尔丢账号登录态 / Fix cloud login lost after task restart', 'HEAD'),
     ('v1.8.5', 'v1.8.5 · 两套 Agent 安装提示词：云鸣潮定制 / 真双机版 / Two install prompts: cloud-custom and true dual-PC', 'HEAD'),

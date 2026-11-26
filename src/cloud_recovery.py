@@ -6,6 +6,10 @@
 到页面导航/reload。ok-script 默认会让任何异常终止 onetime task；本模块把这些
 异常转成"有限次自动重启"，只有用户主动停止或明确的前置条件错误才直接抛出。
 
+出错时若正处在无音区等战斗奖励副本里，浏览器重启后云端会话往往还在副本中：
+先由 ``src.reward_dungeon_recovery`` 续打/检测战斗结束/按 F 领奖，而不是被
+``ensure_main`` 的自动 Esc 踢出副本、再从 F2 图鉴重进（白丢这一场）。
+
 用法::
 
     from src.cloud_recovery import FatalTaskError, run_with_cloud_recovery
@@ -22,7 +26,7 @@ from typing import Callable
 
 from ok.task.exceptions import FinishedException, TaskDisabledException
 
-from src import cloud_browser
+from src import cloud_browser, reward_dungeon_recovery
 
 # 默认最多重启 5 次，避免任务在永久性错误上无限循环。
 DEFAULT_MAX_RESTARTS = 5
@@ -33,6 +37,8 @@ REPEAT_ERROR_LIMIT = 3
 # 出错时默认真正重启浏览器(关闭旧实例 + 用账号 profile 重开)，而不是只刷新页面。
 # 云游戏断线/卡死后页面内存里的会话已损坏，只有重开浏览器才能可靠恢复。
 DEFAULT_RESTART_BROWSER_ON_ERROR = True
+# 出错时在战斗奖励副本里，重启后先续打/领奖，不再从头重进副本。
+DEFAULT_RESUME_REWARD_DUNGEON = True
 
 # 这些异常永远不应该被"刷新重启"吞掉。
 _NEVER_RETRY = (TaskDisabledException, FinishedException, SystemExit, KeyboardInterrupt)
@@ -79,6 +85,26 @@ def _restart_browser_on_error(task, override) -> bool:
     return DEFAULT_RESTART_BROWSER_ON_ERROR
 
 
+def _resume_reward_dungeon(task, override=None) -> bool:
+    """任务配置里可以把副本续打关掉（默认开）。"""
+    if override is not None:
+        return bool(override)
+    saved = getattr(task, 'config', None) or {}
+    if isinstance(saved, dict) and 'Cloud Resume Reward Dungeon' in saved:
+        return bool(saved['Cloud Resume Reward Dungeon'])
+    return DEFAULT_RESUME_REWARD_DUNGEON
+
+
+def snapshot_reward_dungeon(task) -> bool:
+    """出错瞬间记录"是否正在战斗奖励副本里"，供重启后决定是否现场续打。"""
+    try:
+        value = bool(reward_dungeon_recovery.in_reward_dungeon(task))
+    except Exception:  # pragma: no cover - 探测失败就走原流程
+        value = False
+    task._cloud_in_reward_dungeon_before_error = value
+    return value
+
+
 def wait_cloud_ready(task, time_out: int = 600) -> bool:
     """等到云鸣潮真正进入大世界。
 
@@ -97,12 +123,16 @@ def wait_cloud_ready(task, time_out: int = 600) -> bool:
 
 
 def refresh_cloud_game(task, *, wait_ready: bool = True, time_out: int = 600,
-                       restart_browser: bool | None = None) -> bool:
+                       restart_browser: bool | None = None,
+                       resume_dungeon: bool | None = None) -> bool:
     """出错后重启云鸣潮浏览器并（可选）等待云端重新进入大世界。
 
     默认关闭旧浏览器、用当前账号的 Cookie profile 打开一个全新实例——云游戏
     断线或页面卡死后，页面内存里的会话已经损坏，单纯 reload 救不回来。若重启
     浏览器不可用（例如设备管理器缺失），回退到页面导航/reload。
+
+    出错前若正在战斗奖励副本里，重启后先尝试现场续打并按 F 领奖，成功则跳过
+    ``wait_cloud_ready``（它的 ``ensure_main`` 会把我们踢出副本）。
 
     返回是否成功重启/刷新。失败不抛异常，调用方仍会尝试重跑任务，因为有些错误
     与页面本身无关（例如一次识别抖动）。
@@ -155,6 +185,22 @@ def refresh_cloud_game(task, *, wait_ready: bool = True, time_out: int = 600,
     except Exception as error:  # pragma: no cover - capture may be briefly busy
         task.log_warning(task.tr('刷新后重新截取画面失败：{error}').format(error=error))
 
+    # 战斗奖励副本现场优先：云端会话还在副本里时先续打/领奖，绝不让
+    # ensure_main 的自动 Esc 把这一场丢掉再从 F2 重进。
+    task._cloud_reward_resumed = False
+    if (_resume_reward_dungeon(task, resume_dungeon)
+            and getattr(task, '_cloud_in_reward_dungeon_before_error', False)
+            and not _is_stopped(task)):
+        try:
+            resumed = reward_dungeon_recovery.resume_reward_dungeon(task)
+        except Exception as error:  # pragma: no cover - 恢复本身失败走原路径
+            task.log_warning(task.tr('副本现场恢复失败，按原流程重新开始：{error}')
+                             .format(error=error))
+            resumed = False
+        if resumed:
+            task._cloud_reward_resumed = True
+            return reloaded
+
     if wait_ready and not _is_stopped(task):
         try:
             wait_cloud_ready(task, time_out=time_out)
@@ -177,18 +223,24 @@ def run_with_cloud_recovery(
     wait_ready: bool = True,
     time_out: int = 600,
     restart_browser: bool | None = None,
+    resume_dungeon: bool | None = None,
 ):
     """运行 ``runner``，出错时刷新云游戏页面并从头重跑任务。
 
     ``runner`` 可调用多次，必须是幂等的完整任务流程（例如重新等待进入游戏
     后重新执行 DailyTask.run）。用户点停止、任务禁用、应用退出等异常会原样
     抛出；``FatalTaskError``（前置条件错误）也不重试。
+
+    若出错时正在战斗奖励副本，先把现场续打完再重跑任务（见
+    ``refresh_cloud_game`` 的 ``resume_dungeon``）。
     """
     limit = _max_restarts(task, max_restarts)
     label = name or getattr(task, 'name', '云鸣潮任务')
     restarts = 0
     last_signature = None
     repeated = 0
+    task._cloud_in_reward_dungeon_before_error = False
+    task._cloud_reward_resumed = False
 
     while True:
         if _is_stopped(task):
@@ -210,6 +262,14 @@ def run_with_cloud_recovery(
 
             restarts += 1
             task.log_error(task.tr('{name} 运行出错').format(name=label), error)
+
+            # 在画面还没被重启/刷新破坏前记录是否在奖励副本，供恢复链决定
+            # 「现场续打」还是「正常重进」。探测失败就当不在副本。
+            task._cloud_reward_resumed = False
+            if _resume_reward_dungeon(task, resume_dungeon) and refresh_page:
+                snapshot_reward_dungeon(task)
+            else:
+                task._cloud_in_reward_dungeon_before_error = False
 
             signature = _error_signature(error)
             if signature == last_signature:
@@ -237,7 +297,8 @@ def run_with_cloud_recovery(
                           .format(current=restarts, limit=limit))
             if refresh_page:
                 refresh_cloud_game(task, wait_ready=wait_ready, time_out=time_out,
-                                   restart_browser=restart_browser)
+                                   restart_browser=restart_browser,
+                                   resume_dungeon=resume_dungeon)
             else:
                 # 活动类任务（如拉海洛方块）刷新页面会丢失当前活动关卡 UI，
                 # 这里只重置轻量状态，然后原地重跑任务流程。

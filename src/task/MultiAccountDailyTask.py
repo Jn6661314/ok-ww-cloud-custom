@@ -263,7 +263,12 @@ class MultiAccountDailyTask(WWOneTimeTask, BaseCombatTask):
                 cloud_browser.set_active_account(key)
 
         def work():
-            wait_cloud_ready(self, time_out=600)
+            # 副本现场恢复成功后云端仍停在（或刚离开）副本，不能再走
+            # ensure_main：它在副本里会按 Esc 退出，等于白续打这一场。
+            if getattr(self, '_cloud_reward_resumed', False):
+                self.log_info(self.tr('副本现场已续打并领奖，接着执行本账号剩余任务。'))
+            else:
+                wait_cloud_ready(self, time_out=600)
             if task is None:
                 self.run_task_by_class(DailyTask)
             else:

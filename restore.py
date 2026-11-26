@@ -50,6 +50,8 @@ RELATIVE_FILES = [
     # 云鸣潮：每个账号一个浏览器 profile（纯 okww 侧目录切换，不改框架）
     'src/cloud_browser.py',
     'src/cloud_recovery.py',
+    # 云鸣潮战斗奖励副本出错后的现场续打（无音区等，不再从 F2 重进）
+    'src/reward_dungeon_recovery.py',
     # 远控/串流窗口(试验性)：UU远程/ToDesk/向日葵/Parsec 的窗口当 PC 设备，
     # 启动时按「远控/串流窗口」配置切换（globals 里挂载）
     'src/stream_window.py',

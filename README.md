@@ -21,6 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ### 2026-11-26
 
+- **[v1.8.8](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.8)** — **战斗奖励副本出错后现场续打，不再重进**：无音区等副本中途报错时，旧流程重启浏览器后会被 `ensure_main()` 按 Esc 踢出副本、再从 F2 图鉴重进，白丢这一场。现在出错瞬间先记录是否在副本，重启后优先续打未结束的战斗、探测战斗是否结束、发现「领取」F/宝箱就按 F 领奖，再正常退出副本；续打成功跳过二次 `ensure_main`，剩余任务照常执行。不在副本/探测失败/云端会话已回首页时安全回退；可用任务配置 `Cloud Resume Reward Dungeon: false` 关闭。新增 13 项测试，全量 277 项通过。
 - **[v1.8.7](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.7)** — **残象聚落锁敌兜底 + Moonlight 预设**：双极这类敌人飞出聚落范围时，5 秒内锁不到就在**原地**重锁 2 次（不追出边界）；仍失败则跳过当前聚落、直接去图鉴找下一个，真打死有 F 掉落时照常拾取。两个参数（`Lock Retry Timeout (s)` / `Lock Retries`）在任务配置里可调。远控窗口新增 `Preset` 下拉，**Moonlight 一键匹配串流窗口**「`<主机名> - Moonlight`」（不会误抓主界面）；UU远程/ToDesk/向日葵/Parsec 也有预设，可与手填正则叠加。新增 15 项测试，全量 264 项通过。
 - **[v1.8.6](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.6)** — **修复重启任务偶尔丢失云鸣潮账号登录态**：任务出错自动恢复时 `restart_browser()` 没收到账号，内部把 `None` 当成 `default`，结果把当前账号的 profile 存好后却装回磁盘上遗留的 `default` profile，`active_account` 也被改写，表现为「重启后账号掉了」。现在以 live profile 的归属标记为准（`resolve_account()`），错误恢复显式传账号；profile 目录被 Chromium 短暂锁住时改为重试 + 失败回滚，不再静默删 Cookie 文件。新增 6 项回归测试（旧代码全挂），全量 249 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**，已有 profile 不受影响。
 - **[v1.8.5](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.5)** — **两套 Agent 安装提示词**：新增 [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md) 对应真双机版（采集卡 + KMBox Net / SendInput，来自独立项目 okww-dualpc，独立目录安装，不碰现有 ok-ww），原提示词与 README 加分流表。评估后不把双机合并进本分支：它是 6600 行 Python 适配层 + Rust 内核 + Qt 界面的独立实现、基线不同、设备层与其他设备互斥。顺手修正两处过时的 `Done: 15/29 file copies` 文案。仅文档变更，243 项测试通过。
@@ -171,8 +172,8 @@ MuMu / 安卓定制、无尽模式、详情页直接开始、玩法说明弹窗�
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
-   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 32 个）复制到 `working` 与
-   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 64）
+   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 33 个）复制到 `working` 与
+   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 66）
    —— 确认这一行出现，说明装齐了；数字随清单变化属正常，以脚本实际输出为准。
 
 5. 打开 ok-ww，做三项确认：
