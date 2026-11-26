@@ -19,6 +19,13 @@ CLOUD_HEALTH_LOST_GRACE = 3
 # 没有锁定目标且看不到血条持续超过该秒数时, 认定怪物已经死亡/消失, 结束自动战斗。
 # 比 target_enemy 的单次超时更可靠: 即使血条因云游戏压缩闪烁, 也不会无限续命。
 NO_ENEMY_EXIT_SECONDS = 2.0
+# 云游戏专属的无敌人退出窗口, 必须大于 CLOUD_HEALTH_LOST_GRACE。
+# 之前所有端共用 2 秒, 而云游戏血条宽限是 3 秒 —— 宽限还没到期就被 no_enemy_for()
+# 判成"没敌人", 战斗中途中断去走奖励; 官方 TacetTask 要等 walk_to_treasure 30 秒
+# 超时才发现"战斗仍在进行", 表现就是敌人没打完却莫名其妙停了。
+CLOUD_NO_ENEMY_EXIT_SECONDS = 6.0
+# 云游戏重锁时血条消失多久才认定目标死亡: 串流延迟 + 技能特效遮挡下 1.2 秒太短。
+CLOUD_RETARGET_HEALTH_LOST = CLOUD_HEALTH_LOST_GRACE
 # 云游戏锁定图标: 锁定时骷髅外圈为金色, 未锁定为灰色。视频压缩后 has/no_target_cloud 模板分数只差约 0.01,
 # 只用模板定位图标(位置随角色技能栏布局变化), 再看图标内金色像素占比判断是否锁定。
 CLOUD_LOCK_SEARCH_BOX = (0.62, 0.85, 0.84, 0.95)
@@ -253,8 +260,13 @@ class CombatCheck(BaseWWTask):
                 # 开了"原地重锁"的任务: 给足 lock timeout 再判定无敌人,
                 # 否则 2 秒就退出战斗, 根本来不及重锁飞走的目标。
                 seconds = self.target_enemy_retry_timeout
+            elif self.is_adb():
+                seconds = ANDROID_NO_ENEMY_EXIT
+            elif self.is_browser():
+                # 云游戏: 必须比 CLOUD_HEALTH_LOST_GRACE 长, 否则宽限期内就被判脱战。
+                seconds = CLOUD_NO_ENEMY_EXIT_SECONDS
             else:
-                seconds = ANDROID_NO_ENEMY_EXIT if self.is_adb() else NO_ENEMY_EXIT_SECONDS
+                seconds = NO_ENEMY_EXIT_SECONDS
         now = time.monotonic()
         if not getattr(self, '_no_enemy_since', 0):
             self._no_enemy_since = now
@@ -578,6 +590,8 @@ class CombatCheck(BaseWWTask):
                 logger.info(f'target lost try retarget {timeout}')
                 start = time.time()
                 health_lost_start = None
+                # 云游戏画面延迟下血条会闪断数秒, 1.2 秒就提前放弃重锁会把活目标判死。
+                health_lost_patience = CLOUD_RETARGET_HEALTH_LOST if self.is_browser() else 1.2
                 while time.time() - start < timeout:
                     self.tap_target(interval=CLOUD_RETARGET_INTERVAL if self.is_browser() else 0.2)
                     if self.is_adb():
@@ -591,7 +605,7 @@ class CombatCheck(BaseWWTask):
                         if not self.check_health_bar():
                             if health_lost_start is None:
                                 health_lost_start = time.time()
-                            elif time.time() - health_lost_start > 1.2:
+                            elif time.time() - health_lost_start > health_lost_patience:
                                 logger.info('health bar disappeared during retarget')
                                 return False
                         else:

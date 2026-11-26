@@ -61,6 +61,8 @@ class RetryTargetTest(unittest.TestCase):
         check._target_retried_this_episode = False
         check._no_enemy_since = time.monotonic() - 10
         check.is_adb = lambda: False
+        # no_enemy_for() 会先分流 is_adb / is_browser, 这里模拟 PC 端。
+        check.is_browser = lambda: False
         check.log_warning = Mock()
         check.tr = lambda text: text
         check.sleep = Mock()
