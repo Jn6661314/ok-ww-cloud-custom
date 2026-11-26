@@ -29,6 +29,33 @@ logger = Logger.get_logger(__name__)
 # 与 config.py 中的 ConfigOption 名称保持一致(不要带 "/", 否则配置会落到子目录里)
 STREAM_CONFIG_NAME = '远控串流窗口(试验性)'
 
+# 常见远控/串流软件的窗口标题预设(正则, 匹配时忽略大小写)。
+# Moonlight 客户端的串流窗口标题由源码 app/streaming/session.cpp 拼成
+# 「<计算机名> - Moonlight」, 主界面窗口只叫 Moonlight; 这里只匹配串流窗口,
+# 避免误抓主界面。其余软件用窗口类/程序名兜底, 也可在 Window Title 里手填覆盖。
+TITLE_PRESETS = {
+    'Manual': '',
+    'Moonlight': r'\S.*\s+-\s+Moonlight$',
+    'UU远程': r'UU远程',
+    'ToDesk': r'ToDesk',
+    '向日葵': r'SunloginClient|向日葵',
+    'Parsec': r'Parsec',
+}
+
+
+def preset_title(preset) -> str:
+    """取预设对应的标题正则; 未知预设返回空串。"""
+    return TITLE_PRESETS.get(str(preset or '').strip(), '')
+
+
+def resolve_title(preset, manual) -> str:
+    """预设 + 手填标题合成最终正则(忽略大小写由 DeviceManager 负责)。"""
+    pattern = preset_title(preset)
+    custom = str(manual or '').strip()
+    if pattern and custom:
+        return f'(?:{pattern})|(?:{custom})'
+    return pattern or custom
+
 
 def stream_window_settings(global_config):
     """读取远控/串流窗口设置, 返回 (enabled, title, force_pynput) 或 None。"""
@@ -41,7 +68,7 @@ def stream_window_settings(global_config):
         return None
     try:
         enabled = bool(option.get('Enable', False))
-        title = str(option.get('Window Title', '') or '').strip()
+        title = resolve_title(option.get('Preset'), option.get('Window Title'))
         force_pynput = bool(option.get('Force Pynput', True))
     except Exception as e:
         logger.warning(f'read stream window config failed: {e}')

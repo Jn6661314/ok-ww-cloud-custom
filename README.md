@@ -21,6 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ### 2026-11-26
 
+- **[v1.8.7](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.7)** — **残象聚落锁敌兜底 + Moonlight 预设**：双极这类敌人飞出聚落范围时，5 秒内锁不到就在**原地**重锁 2 次（不追出边界）；仍失败则跳过当前聚落、直接去图鉴找下一个，真打死有 F 掉落时照常拾取。两个参数（`Lock Retry Timeout (s)` / `Lock Retries`）在任务配置里可调。远控窗口新增 `Preset` 下拉，**Moonlight 一键匹配串流窗口**「`<主机名> - Moonlight`」（不会误抓主界面）；UU远程/ToDesk/向日葵/Parsec 也有预设，可与手填正则叠加。新增 15 项测试，全量 264 项通过。
 - **[v1.8.6](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.6)** — **修复重启任务偶尔丢失云鸣潮账号登录态**：任务出错自动恢复时 `restart_browser()` 没收到账号，内部把 `None` 当成 `default`，结果把当前账号的 profile 存好后却装回磁盘上遗留的 `default` profile，`active_account` 也被改写，表现为「重启后账号掉了」。现在以 live profile 的归属标记为准（`resolve_account()`），错误恢复显式传账号；profile 目录被 Chromium 短暂锁住时改为重试 + 失败回滚，不再静默删 Cookie 文件。新增 6 项回归测试（旧代码全挂），全量 249 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**，已有 profile 不受影响。
 - **[v1.8.5](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.5)** — **两套 Agent 安装提示词**：新增 [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md) 对应真双机版（采集卡 + KMBox Net / SendInput，来自独立项目 okww-dualpc，独立目录安装，不碰现有 ok-ww），原提示词与 README 加分流表。评估后不把双机合并进本分支：它是 6600 行 Python 适配层 + Rust 内核 + Qt 界面的独立实现、基线不同、设备层与其他设备互斥。顺手修正两处过时的 `Done: 15/29 file copies` 文案。仅文档变更，243 项测试通过。
 
@@ -170,8 +171,8 @@ MuMu / 安卓定制、无尽模式、详情页直接开始、玩法说明弹窗�
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
-   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 31 个）复制到 `working` 与
-   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 62）
+   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 32 个）复制到 `working` 与
+   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 64）
    —— 确认这一行出现，说明装齐了；数字随清单变化属正常，以脚本实际输出为准。
 
 5. 打开 ok-ww，做三项确认：
@@ -251,12 +252,11 @@ UU远程、ToDesk、向日葵、Parsec、Moonlight 这类软件，本质是把**
 > 这类 `show_at_tab` 配置项会被设置页主动跳过，只作为独立页出现；侧边栏需要往下滚一点。
 
 1. 左侧导航栏「游戏」分组 → **远控串流窗口(试验性)** → 勾选 `Enable`；
-2. `Window Title` 填窗口标题关键字（正则，忽略大小写），例如：
-   - UU远程：`UU远程`
-   - ToDesk：`ToDesk`
-   - 向日葵：`SunloginClient`
-   - Parsec：`Parsec`
-   - 多个软件可以写成 `UU远程|ToDesk|Parsec`
+2. `Preset` 直接选软件即可，不用手填正则：
+   - **Moonlight**：匹配串流窗口「`<主机名> - Moonlight`」（上游源码 `session.cpp` 生成的标题），**不会误抓 Moonlight 主界面**；
+   - UU远程 / ToDesk / 向日葵 / Parsec：对应各自窗口标题/类名；
+   - 需要多个或特殊窗口时，`Preset` 选 `Manual`，在 `Window Title` 填标题关键字（正则，忽略大小写），例如 `UU远程`、`ToDesk`、`SunloginClient`、`Parsec` 或 `UU远程|ToDesk|Parsec`；
+   - `Preset` 与 `Window Title` 同时填时两者都会匹配。
 3. 保存并**重启 ok-ww**（配置在启动时读取一次）；
 4. 设备下拉里会只剩一个条目，名字就是远控窗口的标题，选中它照常跑「每日任务」。
 

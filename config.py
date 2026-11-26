@@ -181,13 +181,19 @@ android_config_option = ConfigOption('MuMu 安卓 Config', {
 # 分隔符, 于是落到 configs/远控/串流窗口(试验性).json 这种子目录里。
 stream_config_option = ConfigOption('远控串流窗口(试验性)', {
     'Enable': False,
+    'Preset': 'Manual',
     'Window Title': '',
     'Force Pynput': True,
-}, description='把 UU远程 / ToDesk / 向日葵 / Parsec 等远控或串流软件的窗口当作 PC 设备驱动(试验性)。'
+}, description='把 UU远程 / ToDesk / 向日葵 / Parsec / Moonlight 等远控或串流软件的窗口当作 PC 设备驱动(试验性)。'
               '位置: 左侧导航「游戏」分组最下面(不在「设置」页里)',
+   config_type={
+       'Preset': {'type': 'drop_down',
+                  'options': ['Manual', 'Moonlight', 'UU远程', 'ToDesk', '向日葵', 'Parsec']},
+   },
    config_description={
        'Enable': '开启后设备下拉里只列出标题匹配的远控/串流窗口, 鸣潮 PC 客户端不再出现; 改完需要重启 ok-ww。要求被控电脑上游戏全屏 16:9, 远控窗口客户区也是 16:9 且画面铺满',
-       'Window Title': '窗口标题关键字(正则, 忽略大小写), 例如 UU远程 或 ToDesk|SunloginClient|Parsec。留空则不生效',
+       'Preset': '选软件后自动使用内置窗口标题预设, 不用手填正则。Moonlight 匹配的是串流窗口「<主机名> - Moonlight」, 不会误抓主界面; 选 Manual 时用下面的 Window Title',
+       'Window Title': '窗口标题关键字(正则, 忽略大小写), 例如 UU远程 或 ToDesk|SunloginClient|Parsec。与 Preset 同时填写时两者都会匹配; 都留空则不生效',
        'Force Pynput': '远控软件基本不处理窗口消息(PostMessage), 必须用真实键鼠事件, 保持开启',
    }, show_at_tab=True, icon='monitor')
 

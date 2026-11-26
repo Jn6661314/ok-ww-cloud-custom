@@ -74,6 +74,8 @@ RELATIVE_FILES = [
     'src/combat/CombatCheck.py',
     'src/task/AutoCombatTask.py',
     'src/task/MouseResetTask.py',
+    # 残象聚落：锁不到敌人(双极飞出范围)时原地重锁, 仍失败就跳过当前聚落
+    'src/task/NightmareNestTask.py',
     # 拉海洛方块：官方 v3.8.15 + 无尽模式/详情页直启 + 云鸣潮/MuMu 输入分流
     'src/task/RahaiBlocksTask.py',
     'src/task/rahai_blocks.py',

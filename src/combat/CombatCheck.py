@@ -79,6 +79,12 @@ class CombatCheck(BaseWWTask):
         self.can_break = False
         self._f_break_box = None
         self._android_frame_dead_since = 0
+        # 聚落等场景: 敌人(如双极)飞出范围时, 原地多试几次锁敌再放弃, 而不是
+        # 一路追出聚落。默认 0 = 保持框架原有行为, 只有任务显式开启才生效。
+        self.target_enemy_retry_count = 0
+        self.target_enemy_retry_timeout = 5
+        self.target_lost_give_up = False
+        self._target_retried_this_episode = False
 
     def tap_target(self, **kwargs):
         """锁敌: PC/云游戏用鼠标中键; 安卓端(MuMu)用 Y 键。
@@ -243,12 +249,44 @@ class CombatCheck(BaseWWTask):
         2 秒就把战斗判死会导致"打着打着莫名其妙不打了"。
         """
         if seconds is None:
-            seconds = ANDROID_NO_ENEMY_EXIT if self.is_adb() else NO_ENEMY_EXIT_SECONDS
+            if getattr(self, 'target_enemy_retry_count', 0) and not self.is_adb():
+                # 开了"原地重锁"的任务: 给足 lock timeout 再判定无敌人,
+                # 否则 2 秒就退出战斗, 根本来不及重锁飞走的目标。
+                seconds = self.target_enemy_retry_timeout
+            else:
+                seconds = ANDROID_NO_ENEMY_EXIT if self.is_adb() else NO_ENEMY_EXIT_SECONDS
         now = time.monotonic()
         if not getattr(self, '_no_enemy_since', 0):
             self._no_enemy_since = now
             return False
         return now - self._no_enemy_since >= seconds
+
+    def _retry_target_before_give_up(self, has_health=False):
+        """锁不到目标时原地重试 N 次(不移动, 不追击)。
+
+        返回 True 表示重锁成功、战斗应继续；返回 False 表示确实丢了目标，
+        调用方结束战斗并置 target_lost_give_up，由任务决定下一步(例如换聚落)。
+        """
+        retries = int(getattr(self, 'target_enemy_retry_count', 0) or 0)
+        if retries <= 0 or self.is_adb():
+            return False
+        if self._target_retried_this_episode:
+            return False
+        self._target_retried_this_episode = True
+        for attempt in range(1, retries + 1):
+            self.log_warning(
+                self.tr('目标锁定失败，原地重锁 {current}/{total}（每次最多 {timeout} 秒）')
+                .format(current=attempt, total=retries,
+                        timeout=self.target_enemy_retry_timeout))
+            if self.target_enemy(wait=True, time_out=self.target_enemy_retry_timeout,
+                                 check_health=has_health):
+                self._no_enemy_since = 0
+                self.target_lost_give_up = False
+                return True
+            self.sleep(0.4)
+        self.target_lost_give_up = True
+        self.log_warning(self.tr('多次重锁仍失败，放弃当前目标。'))
+        return False
 
     def _android_frame_is_dead(self):
         """MuMu 抓屏偶发整帧黑/空: 把黑帧当"无敌人"会误退出战斗。
@@ -302,24 +340,35 @@ class CombatCheck(BaseWWTask):
             has_target = self.has_target()
             if has_target:
                 self._no_enemy_since = 0
+                self._target_retried_this_episode = False
+                self.target_lost_give_up = False
                 self.last_in_realm_not_combat = 0
                 return self.scene.set_in_combat()
             has_health = self.check_health_bar()
             if has_health:
                 self._no_enemy_since = 0
+                self._target_retried_this_episode = False
+                self.target_lost_give_up = False
             if (self.is_browser() or self.is_adb()) and self.cloud_health_bar_grace(has_health):
                 # 云游戏: 未锁定但敌人血条仍在(或刚消失不久)即视为战斗中,
                 # 且要先于结束条件判断, 避免技能特效/血条闪烁让声骸识别误判战斗结束。
                 # 但如果血条是特效误判而反复闪烁, 仍要在连续无目标超时后退出。
                 if self.no_enemy_for():
+                    if self._retry_target_before_give_up(has_health):
+                        return self.scene.set_in_combat()
                     return self.reset_to_false(reason='no enemy alive')
                 self.last_in_realm_not_combat = 0
                 return self.scene.set_in_combat()
             if self.no_enemy_for():
+                if self._retry_target_before_give_up(has_health):
+                    return self.scene.set_in_combat()
                 return self.reset_to_false(reason='no enemy alive')
             if self.combat_end_condition is not None and self.combat_end_condition():
                 return self.reset_to_false(reason='end condition reached')
-            if has_health:
+            if getattr(self, 'target_enemy_retry_count', 0) and not self.is_adb():
+                # 聚落场景: 敌人飞走时不要因为残留血条等 30 秒, 5 秒后就走重锁流程。
+                retarget_timeout = self.target_enemy_retry_timeout
+            elif has_health:
                 retarget_timeout = 30
             elif self.is_adb():
                 # 安卓端 has_target 和血条是同一个判定, 血条一没就走默认 3 秒,
@@ -333,6 +382,8 @@ class CombatCheck(BaseWWTask):
             if self.should_check_monthly_card() and self.handle_monthly_card():
                 return self.scene.set_in_combat()
             logger.error('target_enemy failed, try recheck break out of combat')
+            if self._retry_target_before_give_up(has_health):
+                return self.scene.set_in_combat()
             if self.is_adb():
                 # 一次失败不直接退出: 重试一轮, 避免血条短暂消失误判结束战斗。
                 self.sleep(1.5)
