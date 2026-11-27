@@ -68,7 +68,7 @@ DEFAULT_BASE = (Path.home() / 'AppData' / 'Local' / 'ok-ww'
                 / 'data' / 'apps' / 'ok-ww')
 
 # 我们改动/新增的全部文件（相对 working / repo 根目录）
-# 基线：官方 ok-ww v3.8.15（ok-script 3.0.14）。包含云端（云鸣潮）与
+# 基线：官方 ok-ww v3.8.18。包含云端（云鸣潮）与
 # MuMu/安卓模拟器两套定制；纯云端、可直接向上游提 PR 的版本在 official-cloud 分支。
 RELATIVE_FILES = [
     'config.py',
@@ -139,7 +139,7 @@ RELATIVE_FILES = [
     'src/task/MouseResetTask.py',
     # 残象聚落：锁不到敌人(双极飞出范围)时原地重锁, 仍失败就跳过当前聚落
     'src/task/NightmareNestTask.py',
-    # 拉海洛方块：官方 v3.8.15 + 无尽模式/详情页直启 + 云鸣潮/MuMu 输入分流
+    # 拉海洛方块：官方 v3.8.18 + 无尽模式/详情页直启 + 云鸣潮/MuMu 输入分流
     'src/task/RahaiBlocksTask.py',
     'src/task/rahai_blocks.py',
     # MuMu 双指触控：手游版旋转靠屏幕按钮, 用 ADB sendevent 多点触控

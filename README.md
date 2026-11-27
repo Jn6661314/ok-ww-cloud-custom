@@ -74,6 +74,11 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 > 非官方第三方定制补丁集，仅包含相对于上游项目新增/修改的文件，**不是**完整程序。
 > 使用前请先安装官方原版 ok-wuthering-waves。
+>
+> **不想折腾？** 从 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/latest)
+> 下载 `ok-ww-custom-vX.Y.Z-full.7z`（成品包，含 Python 环境与官方 v3.8.18 全部文件），
+> 解压后双击 `install.bat` 即可，不用装 Python、不用跑 `restore.py`、也不用 AI。
+> 成品包不含任何人的配置、账号、Cookie、云存档与日志。
 
 ## 上游与授权（重要）
 
@@ -89,9 +94,9 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ## 功能更新内容
 
-一句话概览：**官方 v3.8.15 之上的云游戏多账号 + MuMu/安卓模拟器定制 + 历史功能回归**。
+一句话概览：**官方 v3.8.18 之上的云游戏多账号 + MuMu/安卓模拟器定制 + 历史功能回归**。
 
-> 本仓库从 v1.6.0 起**以官方 v3.8.15 为基线**：官方已原生支持云鸣潮，并且日常任务只注册一次、
+> 本仓库从 v1.6.0 起**以官方 v3.8.15 为基线**（v1.8.27 起升到 **v3.8.18**）：官方已原生支持云鸣潮，并且日常任务只注册一次、
 > 按所选设备自动区分 PC / 云鸣潮操作。因此这里只保留官方尚未具备的那部分定制。
 
 - 云鸣潮启动支持；每个账号独立浏览器 Cookie profile，互不串号（目录整体换入换出，不改底层框架）
@@ -104,7 +109,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 - 云游戏后台运行，无需鼠标点击浏览器窗口（后台输入伪装）
 - 任务出错自动恢复：优先重启浏览器并重跑，失败再回退刷新页面
 - 进入游戏分级冷却，解决"要点两次开始游戏"；进入完成检测；邮箱奖励误判月卡的死循环修复
-- **拉海洛方块**：官方 v3.8.15 版本之上重新实现无尽模式（无尽页直启 / 加入进行中的对局 /
+- **拉海洛方块**：官方 v3.8.18 版本之上重新实现无尽模式（无尽页直启 / 加入进行中的对局 /
   达到目标分数自动退出结算）、关卡详情页直接开始、玩法说明弹窗自动关闭、
   通关退回活动主页自动点「立即前往」；云鸣潮（浏览器虚拟输入，无需窗口在前台）与
   MuMu/安卓模拟器（模拟器窗口键鼠 + 返回键兜底）都可用
@@ -125,9 +130,9 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 详细的逐项更新说明见 [`CHANGES.md`](CHANGES.md)。
 
-## 与官方 v3.8.15 的差异
+## 与官方 v3.8.18 的差异
 
-| 能力 | 官方 v3.8.15 | 本仓库 v1.7.0 |
+| 能力 | 官方 v3.8.18 | 本仓库 v1.8.27 |
 | --- | --- | --- |
 | 云鸣潮设备入口 / 启动 / 掉线重连 | ✅ 原生 | 沿用官方 |
 | 日常任务注册次数 | ✅ 单个 `DailyTask`，按所选设备自动区分操作 | 沿用官方（已删除我们自建的「云每日」） |
@@ -190,8 +195,8 @@ MuMu / 安卓定制、无尽模式、详情页直接开始、玩法说明弹窗�
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
-   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 33 个）复制到 `working` 与
-   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 66）
+   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 45 个）复制到 `working` 与
+   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 90）
    —— 确认这一行出现，说明装齐了；数字随清单变化属正常，以脚本实际输出为准。
 
 5. 打开 ok-ww，做三项确认：
@@ -201,8 +206,9 @@ MuMu / 安卓定制、无尽模式、详情页直接开始、玩法说明弹窗�
    - 设置里能看到「Enable Blur」（官方自带，默认开启），勾选后云游戏右下角 UID 被模糊/图案覆盖（可选 Blur / Inpaint）。
    - 「角色代码」页（含工坊）存在。
 
-> **基线版本**：本补丁以官方 **v3.8.15**（ok-script 3.0.14）为基线。如果你的官方 ok-ww
-> 还是 v3.8.14 或更早，请先把官方更新到 v3.8.15 再打补丁，否则会出现文件对不上。
+> **基线版本**：本补丁以官方 **v3.8.18** 为基线。如果你的官方 ok-ww 还是 v3.8.17 或更早，
+> 请先把官方更新到 v3.8.18 再打补丁（或直接用 Release 里的成品包，它已经把版本对齐好了），
+> 否则会出现文件对不上。
 
 ## MuMu / 安卓模拟器
 
@@ -321,7 +327,7 @@ ok-ww 自带更新会还原 `working` 和 `repo` 中的文件。两种恢复方�
 
 ### 启动器什么时候会刷掉定制（v1.8.3 / v1.8.4 实测边界）
 
-启动器（pyappify）正常启动/自检时：读 `app.json` 的 `current_version`（如 `v3.8.15`）→
+启动器（pyappify）正常启动/自检时：读 `app.json` 的 `current_version`（如 `v3.8.18`）→
 在 `repo` 里找**同名 git tag** → `git checkout -f <tag>`。`-f` 会丢弃工作区里所有未提交改动，
 所以：
 
@@ -342,7 +348,7 @@ ok-ww 自带更新会还原 `working` 和 `repo` 中的文件。两种恢复方�
 1. **代码必须能正常启动** —— 这是最强的保护（v1.8.4 修的就是启动崩溃）；
 2. 正常启动时靠「提交 + 钉 tag」防止被校验还原。
 
-想临时回官方基线：`git -C "$env:LOCALAPPDATA/ok-ww/data/apps/ok-ww/repo" checkout official-v3.8.15`。
+想临时回官方基线：`git -C "$env:LOCALAPPDATA/ok-ww/data/apps/ok-ww/repo" checkout official-v3.8.18`。
 
 > 仍会覆盖的情况：官方发新版本后在更新卡片点「安装」；或启动崩溃触发自动修复。
 > 真发生了就重跑 `python restore.py`，它会重新提交并重新钉 tag，账号与任务配置不动。
@@ -354,7 +360,7 @@ config.py                   patched 后的上游 config（任务/标签页注册
 src/                        新增与修改的 ok-ww 源码
   task/MultiAccountDailyTask.py  官方多账号任务 + 云端「保存登录状态/切换账号」按钮（仅云设备显示）
   task/DailyTask.py              每日任务云端适配（活跃度多区域重试、约电台不按 Alt）
-  task/RahaiBlocksTask.py        拉海洛方块（官方 v3.8.15 + 无尽模式/详情页直启 + 云/MuMu 输入分流）
+  task/RahaiBlocksTask.py        拉海洛方块（官方 v3.8.18 + 无尽模式/详情页直启 + 云/MuMu 输入分流）
   task/rahai_blocks.py           走棋算法（官方版本 + 束裁剪与 3 秒墙钟预算）
   task/multi_touch.py            MuMu 双指触控（ADB sendevent ABS_MT_SLOT：一指点旋转按钮 + 一指拖方块）
   cloud_browser.py               按账号切换 Playwright profile 目录（纯 ok-ww 侧，不改框架）

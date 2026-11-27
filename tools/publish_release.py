@@ -17,6 +17,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+import urllib.parse
 import urllib.error
 import urllib.request
 
@@ -26,6 +28,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.27', 'v1.8.27 · 基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 解压即用的成品包 / Rebase onto v3.8.18, fix the 7 review findings, ship a ready-to-run build', 'HEAD'),
     ('v1.8.26', 'v1.8.26 · 手机投屏：按键变触点（键位校准）+ 电脑上能看手机画面 / Keys become touches (calibratable) and a preview window', 'HEAD'),
     ('v1.8.25', 'v1.8.25 · 手机投屏能连上但启动不了（抓屏通道异步连，框架问得太早）/ Fix "connected but cannot start": the capture channel connected a few ms too late', 'HEAD'),
     ('v1.8.24', 'v1.8.24 · 手机投屏连不上：手机端把「这台设备的自动重连」关掉了 / The phone turned reconnecting off for this device', 'HEAD'),
@@ -84,6 +87,82 @@ PLAN = [
     ('v1.5.14', 'v1.5.14 · 修复 v1.5.13 识别环节 AttributeError 错误风暴 / Fix AttributeError error storm in v1.5.13 team detection', 'HEAD'),
     ('v1.5.13', 'v1.5.13 · 安卓编队锁定 + 协奏环（延奏）识别修复 / Android formation lock + concerto ring (outro) fix', 'HEAD'),
 ]
+
+
+# tag -> [(本地文件, 附件显示名)]; 只在发布时上传, 同名附件已存在会先删后传(幂等)。
+# 路径相对仓库根目录, 允许 ../ 指到仓库外(成品包不放进 git)。
+ASSETS = {
+    'v1.8.27': [
+        ('../_pkg/ok-ww-custom-v1.8.27-full.7z', 'ok-ww-custom-v1.8.27-full.7z'),
+    ],
+}
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UPLOAD_TIMEOUT = 1800  # 几百 MB 的附件, 别用默认 60 秒
+
+
+def upload_asset(release_id, token, local_path, asset_name):
+    """流式上传一个附件; 同名已存在时先删再传, 保证可重复执行。"""
+    status, existing = api('GET', f'/releases/{release_id}/assets?per_page=100', token)
+    if status == 200 and isinstance(existing, list):
+        for item in existing:
+            if item.get('name') == asset_name:
+                st, _ = api('DELETE', f"/releases/assets/{item['id']}", token)
+                print(f'[asset] 删除同名旧附件 {asset_name}: {st}')
+
+    size = os.path.getsize(local_path)
+    url = (f'https://uploads.github.com/repos/{REPO}/releases/{release_id}'
+           f'/assets?name={urllib.parse.quote(asset_name)}')
+    started = time.time()
+    with open(local_path, 'rb') as fh:
+        req = urllib.request.Request(url, data=fh, method='POST')
+        req.add_header('Authorization', f'Bearer {token}')
+        req.add_header('Accept', 'application/vnd.github+json')
+        req.add_header('X-GitHub-Api-Version', '2022-11-28')
+        req.add_header('User-Agent', 'ok-ww-cloud-custom-release-tool')
+        req.add_header('Content-Type', 'application/octet-stream')
+        req.add_header('Content-Length', str(size))
+        try:
+            with urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT) as resp:
+                code = resp.status
+                body = resp.read().decode('utf-8', 'replace')
+        except urllib.error.HTTPError as e:
+            code = e.code
+            body = e.read().decode('utf-8', 'replace')
+        except Exception as e:  # noqa: BLE001
+            return False, str(e)
+    took = time.time() - started
+    if code in (200, 201):
+        try:
+            info = json.loads(body)
+            extra = info.get('browser_download_url', '')
+        except ValueError:
+            extra = ''
+        return True, f'{size / 1048576:.0f}MB, {took:.0f}s, {extra}'
+    return False, f'{code} {body[:400]}'
+
+
+def upload_assets(tag, release_id, token):
+    items = ASSETS.get(tag) or []
+    if not items:
+        return
+    if not release_id:
+        print(f'[warn] {tag}: 拿不到 release id, 跳过附件')
+        return
+    for local, name in items:
+        path = local if os.path.isabs(local) else os.path.join(REPO_ROOT, local)
+        path = os.path.normpath(path)
+        if not os.path.exists(path):
+            print(f'[warn] {tag}: 找不到附件 {path}, 跳过')
+            continue
+        print(f'[asset] 上传 {name} ({os.path.getsize(path) / 1048576:.0f}MB) ...')
+        ok, detail = False, ''
+        for attempt in range(1, 4):
+            ok, detail = upload_asset(release_id, token, path, name)
+            if ok:
+                break
+            print(f'[warn] 第 {attempt} 次上传失败: {detail}')
+        print(f"[{'ok' if ok else 'error'}] 附件 {name}: {detail}")
 
 
 def get_token():
@@ -198,6 +277,7 @@ def main():
         if status in (200, 201):
             url = resp.get('html_url', '') if isinstance(resp, dict) else ''
             print(f'[ok] {action} Release {tag} -> {url}')
+            upload_assets(tag, resp.get('id') if isinstance(resp, dict) else None, token)
         else:
             print(f'[error] {action} Release {tag} 失败: {status} {resp}')
 

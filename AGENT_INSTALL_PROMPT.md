@@ -45,7 +45,7 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    并把被改文件备份为 .pre-cloud 后缀。请勿手动改动 Cookie、MultiAccountConfig.json、
    自定义队伍文件。
    脚本结束会打印 "Done: N file copies across 2 directories."（N = 定制文件数 × 2，
-   当前清单 33 个文件时是 66），请确认这一行出现。数字随仓库清单变化属正常。
+   当前清单 45 个文件时是 90），请确认这一行出现。数字随仓库清单变化属正常。
 6. 启动 ok-ww，做三项确认：
    a. 设备下拉里选「云游戏」，任务列表里**仍然只有一个日常任务**和一个多账号任务
       （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类
@@ -60,23 +60,23 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    一键恢复.bat；大版本结构变化则重跑第 4 步的安装脚本。详见 docs/backup-and-restore.md。
 
 【版本号的坑：启动器和应用内读的是两个地方】
-   - 应用内「关于」页 / 日志的版本来自 working/config.py 的 version（本补丁为 v3.8.15）；
+   - 应用内「关于」页 / 日志的版本来自 working/config.py 的 version（本补丁为 v3.8.18）；
    - 启动器（ok-ww.exe）窗口显示的版本来自 data/apps/ok-ww/app.json 的 current_version。
-     若那里还是 v3.8.14，启动器不仅显示错误，还会认为"可以更新到 3.8.15"——
+     若那里还是 v3.8.17，启动器不仅显示错误，还会认为"可以更新到 3.8.18"——
      用户一点更新，官方代码就覆盖 working/repo，**整套定制全部丢失**。
    - restore.py 每次部署都会自动把 current_version 同步成 config.py 的 version（改前备份
      app.json.<时间戳>.bak）。所以务必用 restore.py 部署，不要手动只拷 .py 文件。
-   - 用户报"版本还是 3.8.14"时：先看是启动器还是应用内；两者不一致就让其重跑 restore.py。
+   - 用户报"版本还是 3.8.17"时：先看是启动器还是应用内；两者不一致就让其重跑 restore.py。
 
 【启动器为什么会把定制刷回官方（v1.8.3 钉 tag + v1.8.4 修崩溃）】
    - 启动器（pyappify）的动作是：读 app.json 的 current_version → 在 repo 里找同名 git tag
-     （例如 v3.8.15）→ `git checkout -f <tag>`。`-f` 会丢弃工作区所有未提交改动。
+     （例如 v3.8.18）→ `git checkout -f <tag>`。`-f` 会丢弃工作区所有未提交改动。
    - 所以"只提交进 git"不够：定制提交只是当时的 HEAD，tag 仍指向官方提交，checkout 一秒钟切回官方
      （两次真实事故：22 个已跟踪文件被整体还原，config.py 17430→13380 字节）。
    - restore.py 现在会把版本 tag 本身钉到定制提交（`pin_version_tag_to_head`），原官方指向备份成
-     `official-v3.8.15`。之后启动器 checkout 出来的就是定制树。
+     `official-v3.8.18`。之后启动器 checkout 出来的就是定制树。
    - 排查用户"定制又没了"：`git -C <repo> reflog -5` 看有没有 `checkout: moving from ... to ...`；
-     `git -C <repo> rev-parse v3.8.15^{commit}` 应等于 `git -C <repo> rev-parse HEAD`。
+     `git -C <repo> rev-parse v3.8.18^{commit}` 应等于 `git -C <repo> rev-parse HEAD`。
      不符合就重跑 restore.py。
    - **但启动崩溃时钉 tag 也拦不住**：启动器判定"安装损坏"会绕开 git，直接从官方文件整份重装
      working/repo（2026-11-25 23:56 实例：reflog 的 checkout 目标是定制提交，事后 HEAD 仍是官方
@@ -86,9 +86,10 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    - 全局配置名一致性有静态检查：`tests/TestGlobalConfigRefs.py`（改任何配置名前先跑它）。
 
 【如果用户报"启动不了/按钮不见了/UID 还在"，按这个顺序排查】
-   a. 确认版本对得上：本补丁以官方 v3.8.15 + ok-script 3.0.14 为基线。若用户装的是
-      更老的官方版（如 v3.8.14），先让用户把官方 ok-ww 更新到 v3.8.15 再装补丁。
-   b. 确认装齐 33 个文件：working/src/task/MultiAccountDailyTask.py、
+   a. 确认版本对得上：本补丁以官方 v3.8.18 为基线。若用户装的是
+      更老的官方版（如 v3.8.15），先让用户把官方 ok-ww 更新到 v3.8.18 再装补丁
+      （或者直接让用户下 Release 里的 `ok-ww-custom-vX.Y.Z-full.7z` 成品包，一步到位）。
+   b. 确认装齐 45 个文件：working/src/task/MultiAccountDailyTask.py、
       working/src/cloud_browser.py、working/src/stream_window.py、working/src/globals.py、
       working/src/task/BaseWWTask.py、working/ok/device/DeviceManager.py、working/config.py
       等是否存在且内容较新。
