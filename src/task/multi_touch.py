@@ -224,6 +224,71 @@ class AdbMotionEventDevice:
             self.up(slot)
 
 
+class NemuIpcTouchDevice:
+    """用 MuMu IPC 的 nemu_input_event_touch_down/up 注入触点（截图坐标）。
+
+    为什么不用 ADB ``input motionevent``（AdbMotionEventDevice）
+    ----------------------------------------------------------
+    ``input`` 命令的坐标走 Android 的 **wm size 逻辑显示坐标**：MuMu 横屏游戏
+    时 wm size 报的是竖屏尺寸（如 900x1600），而截图/SurfaceFlinger 抓到的是
+    横屏 framebuffer（如 1600x900）。两套坐标系不同，横屏截图坐标直接喂给
+    ``input motionevent`` 会 x/y 双向偏移且偏差很大（v1.8.14 实测）。
+
+    MuMu IPC 的触控 API 则与截图 framebuffer 是同一套坐标：官方框架的
+    ``ADBInteraction.swipe_nemu`` 就是把任务屏幕坐标直接传给
+    ``nemu_impl.down(*point)``，其 ``convert_xy``（竖屏->横屏换算）是注释掉的。
+    所以这里 down/move/up 的坐标就是 interaction 传进来的截图坐标，不再经过
+    任何 2048x1152 逻辑中转或竖屏换算。
+
+    IPC 是单指 API（连续 down 视为 swipe，up 抬起全部触点）。拉海洛方块旋转
+    已由 MuMu 键位映射的真实键盘负责，拖拽只需单指，因此够用。slot 参数保留
+    只为接口兼容。
+    """
+
+    def __init__(self, capture_method):
+        self.capture = capture_method
+        self.nemu = getattr(capture_method, 'nemu_impl', None)
+        if self.nemu is None:
+            raise RuntimeError(
+                'MuMu IPC 触控不可用：抓屏未建立 IPC 连接，请把抓屏方式设为 IPC 后重试。')
+        self._active = False
+
+    def game_to_touch(self, gx, gy):
+        """interaction 的 2048x1152 基准 -> 截图 framebuffer 像素坐标。
+
+        MuMuMultiTouchInteraction 把截图像素坐标按 1920x1080 归一到 2048x1152，
+        这里按同样的基准还原（与 AdbMotionEventDevice.game_to_touch 一致）。
+        两步相乘是恒等变换，最终坐标就是 _place() 里 point() 算出的真实截图
+        像素坐标 —— 正是 nemu_input_event_touch_down 期望的坐标系。
+        """
+        return (round(gx / GAME_W * 1920), round(gy / GAME_H * 1080))
+
+    def _down(self, gx, gy):
+        x, y = self.game_to_touch(gx, gy)
+        # IPC 连续 down 即被视为 move，无需单独的 move 事件。
+        self.nemu.down(x, y)
+        self._active = True
+
+    def down(self, slot, gx, gy):
+        self._down(gx, gy)
+
+    def move(self, slot, gx, gy):
+        self._down(gx, gy)
+
+    def up(self, slot):
+        if self._active:
+            self.nemu.up()
+            self._active = False
+
+    def tap(self, slot, gx, gy, duration=0.08):
+        self._down(gx, gy)
+        time.sleep(duration)
+        self.up(slot)
+
+    def close(self):
+        self.up(0)
+
+
 def parse_mukey(key):
     """把配置里的键名解析成 pynput 能接受的对象（None = 无法解析）。"""
     from pynput import keyboard

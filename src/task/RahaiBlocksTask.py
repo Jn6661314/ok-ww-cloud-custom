@@ -72,15 +72,23 @@ class RahaiBlocksTask(BaseTask):
             return BrowserInteraction(capture)
         if self.is_adb():
             from src.task.multi_touch import (
-                AdbMotionEventDevice, MuMuMultiTouchInteraction, send_real_key,
+                NemuIpcTouchDevice, AdbMotionEventDevice,
+                MuMuMultiTouchInteraction, send_real_key,
             )
-            adb_device = self.executor.device_manager.device
-            if adb_device is None:
-                raise RuntimeError("MuMu 触控输入需要已连接的 adb 设备。")
-            # 用 input motionevent 走逻辑显示坐标（1920x1080），由 Android 自动
-            # 旋转到物理触屏；不再用 sendevent 手算 (gy,gx) 转置（那个映射漏了
-            # 90° 旋转的轴翻转，落点会镜像/错位）。
-            self._multi_touch = AdbMotionEventDevice(adb_device)
+            # MuMu IPC 触控的坐标与截图 framebuffer 一致（横屏画面像素），
+            # 这正是 interaction 传进来的坐标系 —— 落点和使用者看到的画面 1:1 对应。
+            # v1.8.14 的 AdbMotionEventDevice 走 input motionevent，那是 Android
+            # wm size 竖屏逻辑坐标（如 900x1600），与横屏截图不同一套，x/y 双向偏移。
+            # MuMu IPC 未建立连接时（非 IPC 抓屏/低版本），回退到 ADB 方案。
+            capture_method = self.executor.device_manager.capture_method
+            nemu = getattr(capture_method, 'nemu_impl', None)
+            if nemu is not None:
+                self._multi_touch = NemuIpcTouchDevice(capture_method)
+            else:
+                adb_device = self.executor.device_manager.device
+                if adb_device is None:
+                    raise RuntimeError("MuMu 触控输入需要已连接的 adb 设备或 IPC 抓屏。")
+                self._multi_touch = AdbMotionEventDevice(adb_device)
             rotate_key = (self.config.get('Rotate Key (MuMu Keymap)') or '').strip()
             hwnd_window = self.executor.device_manager.hwnd_window
             return MuMuMultiTouchInteraction(

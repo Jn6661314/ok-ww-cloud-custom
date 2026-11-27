@@ -19,7 +19,7 @@ from src.task.multi_touch import (  # noqa: E402
     ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID,
     EV_ABS, EV_KEY, EV_SYN, BTN_TOUCH, SYN_REPORT,
     GAME_H, GAME_W, MultiTouchDevice, MuMuMultiTouchInteraction,
-    AdbMotionEventDevice,
+    AdbMotionEventDevice, NemuIpcTouchDevice,
 )
 
 
@@ -300,6 +300,58 @@ class MotionEventDeviceTest(unittest.TestCase):
         actions = [e[2] for e in dev.events]
         self.assertEqual(actions.count('DOWN'), 2)
         self.assertEqual(actions.count('UP'), 2)
+
+
+class NemuIpcTouchDeviceTest(unittest.TestCase):
+    """IPC 触控坐标与截图 framebuffer 一致（修 x/y 双向偏移）。"""
+
+    def make(self):
+        nemu = Mock()
+        capture = Mock()
+        capture.nemu_impl = nemu
+        return nemu, NemuIpcTouchDevice(capture)
+
+    def test_game_coord_recovers_screenshot_pixel(self):
+        _, d = self.make()
+        # interaction 把截图像素 (960,540) 归一到 2048x1152，这里必须还原成 (960,540)
+        self.assertEqual(
+            d.game_to_touch(960 / 1920 * GAME_W, 540 / 1080 * GAME_H), (960, 540))
+        self.assertEqual(d.game_to_touch(GAME_W, GAME_H), (1920, 1080))
+
+    def test_down_move_call_nemu_down_with_screenshot_coord(self):
+        nemu, d = self.make()
+        d.down(0, 960 / 1920 * GAME_W, 540 / 1080 * GAME_H)
+        d.move(0, 480 / 1920 * GAME_W, 270 / 1080 * GAME_H)
+        self.assertEqual(nemu.down.call_args_list, [call(960, 540), call(480, 270)])
+        nemu.up.assert_not_called()
+
+    def test_up_calls_nemu_up_once(self):
+        nemu, d = self.make()
+        d.down(0, 1024, 576)
+        d.up(0)
+        nemu.up.assert_called_once()
+        d.up(0)  # 重复抬起不再发
+        nemu.up.assert_called_once()
+
+    def test_tap_down_then_up(self):
+        nemu, d = self.make()
+        # 传入的是 2048x1152 基准坐标，IPC 收到的是还原后的截图像素坐标
+        d.tap(0, 256 / 1920 * GAME_W, 200 / 1080 * GAME_H, duration=0.01)
+        nemu.down.assert_called_once_with(256, 200)
+        nemu.up.assert_called_once()
+
+    def test_close_releases_active_touch(self):
+        nemu, d = self.make()
+        d.down(0, 1024 / 1920 * GAME_W, 576 / 1080 * GAME_H)
+        d.close()
+        nemu.up.assert_called_once()
+        self.assertFalse(d._active)
+
+    def test_missing_ipc_connection_raises(self):
+        capture = Mock()
+        capture.nemu_impl = None
+        with self.assertRaises(RuntimeError):
+            NemuIpcTouchDevice(capture)
 
 
 if __name__ == '__main__':

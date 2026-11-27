@@ -283,9 +283,27 @@ class ReturnToListTest(unittest.TestCase):
 
 
 class MumuInteractionTest(unittest.TestCase):
-    """MuMu/安卓模拟器：input motionevent 单指拖拽 + 键位映射键旋转。"""
+    """MuMu/安卓模拟器：IPC 触控（截图坐标）单指拖拽 + 键位映射键旋转。"""
 
-    def test_adb_uses_multitouch_interaction(self):
+    def test_adb_ipc_uses_nemu_touch_device(self):
+        # IPC 抓屏可用 -> 用 NemuIpcTouchDevice（坐标与截图一致，修 x/y 偏移）
+        task = make_task()
+        task.is_browser = Mock(return_value=False)
+        task.is_adb = Mock(return_value=True)
+        capture = Mock()
+        capture.nemu_impl = Mock()
+        task._executor.device_manager.capture_method = capture
+        task._executor.device_manager.device = Mock()
+        with patch('src.task.multi_touch.NemuIpcTouchDevice') as ntd, \
+                patch('src.task.multi_touch.MuMuMultiTouchInteraction') as interaction:
+            result = task._make_interaction()
+        self.assertIs(result, interaction.return_value)
+        ntd.assert_called_once_with(capture)
+        self.assertEqual(interaction.call_args.kwargs['rotate_key'], 'f1')
+        self.assertTrue(callable(interaction.call_args.kwargs['key_sender']))
+
+    def test_adb_without_ipc_falls_back_to_motionevent(self):
+        # 非 IPC 抓屏 -> 回退 AdbMotionEventDevice（保留旧设备兼容）
         task = make_task()
         task.is_browser = Mock(return_value=False)
         task.is_adb = Mock(return_value=True)
@@ -305,6 +323,7 @@ class MumuInteractionTest(unittest.TestCase):
         task.is_browser = Mock(return_value=False)
         task.is_adb = Mock(return_value=True)
         task._executor.device_manager.device = Mock()
+        task._executor.device_manager.capture_method = 'windows'
         task.config = {'Rotate Key (MuMu Keymap)': ''}
         with patch('src.task.multi_touch.AdbMotionEventDevice'), \
                 patch('src.task.multi_touch.MuMuMultiTouchInteraction') as interaction:
