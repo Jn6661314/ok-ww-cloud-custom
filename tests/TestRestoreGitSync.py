@@ -224,5 +224,64 @@ class VerifyDeployTest(unittest.TestCase):
             self.assertEqual(restore.verify_deploy(self.working, self.repo), 1)
 
 
+class CopyOverTest(unittest.TestCase):
+    """目标文件被占用时的退路。
+
+    投屏内核这种 exe 常常还带着上一次运行的进程，管理员权限下还可能杀不掉，
+    直接覆盖会报 [WinError 32]。Windows 允许**重命名**正在运行的 exe（改的是
+    目录项不是文件内容），所以先把旧文件挪走再复制 —— 整个部署不至于卡住。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.source = self.root / 'source.exe'
+        self.target = self.root / 'target.exe'
+        self.source.write_bytes(b'new')
+        self.target.write_bytes(b'old')
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_copies_when_the_target_is_free(self):
+        restore.copy_over(self.source, self.target, '20260101')
+        self.assertEqual(self.target.read_bytes(), b'new')
+
+    def test_renames_the_busy_target_and_copies(self):
+        """目标被占用时（复制报 PermissionError），改名腾位置再复制。"""
+        real_copy = shutil.copy2
+
+        def fake_copy(src, dst, *args, **kwargs):
+            if Path(dst) == self.target and not getattr(fake_copy, 'failed', False):
+                # 第一次复制（直接覆盖）失败，模拟被占用的 exe
+                fake_copy.failed = True
+                raise PermissionError(32, '另一个程序正在使用此文件')
+            return real_copy(src, dst, *args, **kwargs)
+
+        with mock.patch.object(restore.shutil, 'copy2', side_effect=fake_copy):
+            restore.copy_over(self.source, self.target, '20260101')
+
+        self.assertEqual(self.target.read_bytes(), b'new')
+        # 旧文件被挪走了, 没丢
+        moved = list(self.root.glob('target.exe.old*'))
+        self.assertEqual(len(moved), 1)
+        self.assertEqual(moved[0].read_bytes(), b'old')
+
+    def test_puts_the_old_file_back_when_the_copy_still_fails(self):
+        """改名之后还是复制不成功时, 旧文件要放回去, 不能把部署搞得更糟。"""
+        calls = {'n': 0}
+
+        def always_fail(src, dst, *args, **kwargs):
+            calls['n'] += 1
+            raise PermissionError(32, '另一个程序正在使用此文件')
+
+        with mock.patch.object(restore.shutil, 'copy2', side_effect=always_fail):
+            with self.assertRaises(PermissionError):
+                restore.copy_over(self.source, self.target, '20260101')
+
+        self.assertTrue(self.target.exists(), '旧文件没放回去')
+        self.assertEqual(self.target.read_bytes(), b'old')
+
+
 if __name__ == '__main__':
     unittest.main()

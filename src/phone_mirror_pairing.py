@@ -115,6 +115,10 @@ def _build_dialog_class():
             self.reject_button.clicked.connect(lambda: self._confirm(False))
             self.close_button = QPushButton('关闭')
             self.close_button.clicked.connect(self.close)
+            # 还没拿到配对码之前不能点: 内核那会儿不会读标准输入, 白点一下
+            # 只会写失败。
+            self.confirm_button.setEnabled(False)
+            self.reject_button.setEnabled(False)
             self.buttons.addWidget(self.confirm_button)
             self.buttons.addWidget(self.reject_button)
             self.buttons.addWidget(self.close_button)
@@ -163,6 +167,8 @@ def _build_dialog_class():
                 self.code_label.setText('')
             elif engine.last_error:
                 self.status_label.setText(f'出错了: {engine.last_error}')
+            elif engine.status_message:
+                self.status_label.setText(engine.status_message)
             elif engine.pairing_uri:
                 self.status_label.setText('等待手机扫码…')
 

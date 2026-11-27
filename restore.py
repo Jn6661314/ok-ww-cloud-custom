@@ -27,6 +27,43 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 FILES = HERE  # 本仓库根目录即"最终生效文件"目录
 
+# Windows 上正在运行的 exe 是锁着的, 覆盖会报 [WinError 32]。但**改名是允许的**
+# (改的是目录项, 不是文件内容), 所以先把旧文件挪走, 再把新的放上去。
+# 挪走的旧文件等那个进程自己退出后就没用了, 留着也不碍事。
+BUSY_SUFFIX = '.old'
+
+
+def copy_over(source: Path, target: Path, stamp: str) -> None:
+    """把 source 复制到 target; 目标被占用时先给旧文件改名再复制。
+
+    投屏内核这种 exe 常常还带着上一次运行的进程, 管理员权限下还可能杀不掉,
+    直接覆盖就会失败 —— 改名这一步能绕过去, 不至于整个部署卡住。
+    """
+    try:
+        shutil.copy2(source, target)
+        return
+    except PermissionError:
+        if not target.exists():
+            raise
+    # 被占用了: 改名腾位置
+    away = target.with_name(target.name + BUSY_SUFFIX + '-' + stamp)
+    try:
+        target.replace(away)
+    except OSError:
+        # 改不了名 (比如只读目录), 那就老实报错
+        shutil.copy2(source, target)
+        return
+    try:
+        shutil.copy2(source, target)
+    except OSError:
+        # 复制失败就把旧文件放回去
+        try:
+            away.replace(target)
+        except OSError:
+            pass
+        raise
+    print(f'[提示] {target.name} 正被某个进程占用, 已把旧文件挪到 {away.name}')
+
 DEFAULT_BASE = (Path.home() / 'AppData' / 'Local' / 'ok-ww'
                 / 'data' / 'apps' / 'ok-ww')
 
@@ -135,7 +172,7 @@ def restore_to(dest: Path, stamp: str, do_backup: bool, label: str) -> int:
                 shutil.copy2(target, keeper)
                 backed_up += 1
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            copy_over(source, target, stamp)
             restored += 1
         except OSError as error:
             print(f'[失败] {target}: {error}')

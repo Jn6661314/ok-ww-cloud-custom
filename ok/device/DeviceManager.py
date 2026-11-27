@@ -985,10 +985,19 @@ class DeviceManager:
             logger.error('手机投屏: 投屏内核没起来, 无法抓屏')
             self.capture_method = None
             return
-        if engine.port is None and not engine.wait_ready(timeout=5.0):
-            logger.error('手机投屏: 投屏内核还没就绪(手机上可能还没点允许)')
-            self.capture_method = None
-            return
+        if engine.port is None:
+            # 内核还活着 = 还在等手机上线 / 等手机上点「允许」, 多等一会儿;
+            # 内核已经退了 = 没必要等, 直接把它报的原因说出来。
+            timeout = 30.0 if engine.running else 2.0
+            if not engine.wait_ready(timeout=timeout):
+                reason = engine.failure_reason
+                if reason:
+                    logger.error(f'手机投屏: 投屏内核还没就绪: {reason}')
+                else:
+                    logger.error('手机投屏: 投屏内核还没就绪, '
+                                 '请在手机上的 NectarLink 里点「允许」投屏')
+                self.capture_method = None
+                return
         old = self.capture_method
         if isinstance(old, PhoneMirrorSocketCaptureMethod):
             old.close()

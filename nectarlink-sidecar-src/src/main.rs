@@ -21,10 +21,11 @@ mod link;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use err::{Note, Result, fail};
 use nectarlink_core::{
-    MIRROR_VIEW, DeviceId, DeviceInfo, DeviceKind, MirrorConfig, MirrorInput, MirrorSink, MirrorStart, Node,
+    MIRROR_VIEW, DeviceId, DeviceInfo, DeviceKind, LinkState, MirrorConfig, MirrorInput, MirrorSink, MirrorStart, Node,
     NodeConfig, NodeEvent, PairingEvent, Platform, PowerLevel, TouchAction,
 };
 use serde_json::json;
@@ -55,6 +56,8 @@ struct Cli {
     name: String,
     /// The version this engine reports to the phone.
     app_version: String,
+    /// How long to wait for the phone to come online (seconds).
+    wait_seconds: u64,
 }
 
 impl Default for Cli {
@@ -70,6 +73,7 @@ impl Default for Cli {
             no_lan: false,
             name: "ok-ww".to_string(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
+            wait_seconds: 120,
         }
     }
 }
@@ -129,10 +133,23 @@ impl Platform for SidecarPlatform {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(err) = run().await {
+        // stdout carries the status lines, so the embedder reads the error
+        // from there too — not only from stderr, which it may not capture.
+        emit(json!({"type": "error", "message": err.to_string()}));
+        eprintln!("Error: {err:?}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     let cli = parse_args()?;
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        // The embedder reads this log as text: colour codes would just get in
+        // the way of telling an ordinary line from a real error.
+        .with_ansi(false)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
@@ -162,6 +179,11 @@ async fn main() -> Result<()> {
     let node = Node::start(config, platform).await.note("can't start the engine")?;
     node.update_power(PowerLevel::NotApplicable, vec![MIRROR_VIEW.to_string()]).await;
 
+    // 记下自己在跑: 同一个数据目录只能有一个内核。设备身份是存在这里的, 两个
+    // 内核用同一个身份在局域网里互相广播时, 手机会拿到对不上的地址, 然后报
+    // "设备离线" —— 所以后来的那个要能被发现并被清掉。
+    let state = StateFile::create(&data_dir)?;
+
     if cli.pair {
         pair(&node).await?;
     }
@@ -183,7 +205,39 @@ async fn main() -> Result<()> {
         sound_only: false,
         display: None,
     };
-    node.mirror_start(target, options).await.note("the phone did not agree to share its screen")?;
+
+    // 节点刚起来时, 和手机之间的连接通常还没建好(后台在拨号重连)。这时候直接
+    // 要求投屏, 内核会拿到 "device is offline" 然后自己退出 —— 所以先等手机上线。
+    // 上游 CLI 也是先等设备在线再开口的。
+    let wait = Duration::from_secs(cli.wait_seconds);
+    wait_until_online(&node, target, wait).await?;
+
+    // 要求手机开始投屏(手机上会弹一个"允许")。等待期间连接可能又断了一次,
+    // 那就再等等重试 —— 手机刚同意时连接经常要重建一次。
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match node.mirror_start(target, options.clone()).await {
+            Ok(()) => break,
+            Err(err) => {
+                let retryable = matches!(
+                    err,
+                    nectarlink_core::Error::Offline
+                        | nectarlink_core::Error::Network(_)
+                        | nectarlink_core::Error::Timeout
+                );
+                if !retryable || attempt >= 5 {
+                    return Err::<(), _>(err).note("the phone did not agree to share its screen");
+                }
+                emit(json!({
+                    "type": "retry",
+                    "attempt": attempt,
+                    "message": err.to_string(),
+                }));
+                wait_until_online(&node, target, wait).await?;
+            }
+        }
+    }
 
     // The phone asks its user; wait for the stream to start.
     loop {
@@ -207,6 +261,7 @@ async fn main() -> Result<()> {
     // engine again instead of starting a second one.
     let link = json!({"port": port, "pid": std::process::id()});
     let _ = std::fs::write(&link_file, link.to_string());
+    state.set_port(port);
     emit(json!({"type": "ready", "port": port}));
 
     let decoder = tokio::task::spawn_blocking({
@@ -220,6 +275,117 @@ async fn main() -> Result<()> {
         _ = serving => {}
     }
     Ok(())
+}
+
+/// Waits until the phone is reachable, so the mirror request doesn't bounce.
+///
+/// A node that just started is still dialing the phone in the background: the
+/// session isn't up yet, and asking for the screen then fails with "device is
+/// offline". The upstream CLI waits for the device to come online first, and so
+/// does this.
+async fn wait_until_online(node: &Node, id: DeviceId, timeout: Duration) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut announced = false;
+    let mut last_note = std::time::Instant::now();
+    loop {
+        // The store's own view of the link: Online means the phone and this
+        // node have a session, which is what the mirror request needs.
+        let online = node
+            .paired_devices()
+            .map(|devices| {
+                devices
+                    .iter()
+                    .any(|d| d.id == id && matches!(d.link, LinkState::Online { .. }))
+            })
+            .unwrap_or(false);
+        if online {
+            emit(json!({"type": "online", "id": id.to_string()}));
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return fail(format!(
+                "the phone didn't come online within {} seconds (is the NectarLink app running on it?)",
+                timeout.as_secs()
+            ));
+        }
+        // Say we're waiting, then keep saying so now and then: the embedder
+        // shows this to the user, and silence looks like a hang.
+        if !announced || last_note.elapsed() >= Duration::from_secs(10) {
+            announced = true;
+            last_note = std::time::Instant::now();
+            emit(json!({
+                "type": "waiting",
+                "message": "等手机上线(手机上的 NectarLink 要在运行)…",
+            }));
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+/// Remembers that this engine is running, so the next start can find it.
+///
+/// Only one engine may use a data directory: the device identity lives there,
+/// and two engines answering with the same identity on the local network leave
+/// the phone with addresses that don't match — it then reports the device as
+/// offline.
+struct StateFile {
+    path: PathBuf,
+}
+
+impl StateFile {
+    /// Writes the state file for this process.
+    fn create(data_dir: &std::path::Path) -> Result<Self> {
+        let path = data_dir.join("sidecar.json");
+        let state = StateFile { path };
+        state.write(json!({
+            "pid": std::process::id(),
+            "port": 0,
+            "started": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        }));
+        Ok(state)
+    }
+
+    /// Writes the state file, keeping whatever was already in it.
+    fn write(&self, mut value: serde_json::Value) {
+        let mut state = self.read().unwrap_or_else(|| serde_json::json!({}));
+        if let (Some(state), Some(value)) = (state.as_object_mut(), value.as_object_mut()) {
+            for (key, item) in value {
+                state.insert(key.clone(), item.clone());
+            }
+        } else {
+            return;
+        }
+        let _ = std::fs::write(&self.path, state.to_string());
+    }
+
+    /// Reads the state file.
+    fn read(&self) -> Option<serde_json::Value> {
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// Records the port the pictures come out on.
+    fn set_port(&self, port: u16) {
+        self.write(json!({"port": port}));
+    }
+}
+
+impl Drop for StateFile {
+    fn drop(&mut self) {
+        // Only remove the file while it still describes this process: another
+        // engine may have taken over in the meantime.
+        let mine = self
+            .read()
+            .and_then(|state| state.get("pid").and_then(|pid| pid.as_u64()))
+            .map(|pid| pid == std::process::id() as u64)
+            .unwrap_or(false);
+        if mine {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 /// Decodes the phone's stream, and hands the pictures on.
@@ -476,8 +642,13 @@ fn emit(value: serde_json::Value) {
 
 /// Reads the settings from the command line.
 fn parse_args() -> Result<Cli> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+/// Reads the settings from a list of arguments.
+fn parse_args_from<I: IntoIterator<Item = String>>(args: I) -> Result<Cli> {
     let mut cli = Cli::default();
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().unwrap_or_default();
         match arg.as_str() {
@@ -491,6 +662,7 @@ fn parse_args() -> Result<Cli> {
             "--no-lan" => cli.no_lan = true,
             "--name" => cli.name = value(),
             "--app-version" => cli.app_version = value(),
+            "--wait-seconds" => cli.wait_seconds = value().parse().unwrap_or(cli.wait_seconds),
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -521,7 +693,52 @@ fn print_help() {
            --pair              pair with a phone first, then mirror it\n\
            --no-lan            don't announce this device on the local network\n\
            --name <name>       the name this device shows on the phone (default ok-ww)\n\
-           --app-version <v>   the version this engine reports (default {version})",
+           --app-version <v>   the version this engine reports (default {version})\n\
+           --wait-seconds <n>  how long to wait for the phone to come online (default 120)",
         version = env!("CARGO_PKG_VERSION")
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The engine has to wait for the phone: asking for the screen before the
+    /// phone is reachable fails with "device is offline" and the engine quits.
+    #[test]
+    fn the_wait_time_can_be_set() {
+        let cli = parse_args_from(["--wait-seconds".to_string(), "30".to_string()]).unwrap();
+        assert_eq!(cli.wait_seconds, 30);
+    }
+
+    #[test]
+    fn the_wait_time_has_a_default() {
+        let cli = parse_args_from(Vec::<String>::new()).unwrap();
+        assert!(cli.wait_seconds > 0, "总得给手机一点时间上线");
+    }
+
+    /// The state file is how the next start finds (and clears) the engine this
+    /// one left behind.
+    #[test]
+    fn the_state_file_says_which_engine_is_running() {
+        let dir = std::env::temp_dir().join(format!("nl-state-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let state = StateFile::create(&dir).unwrap();
+            state.set_port(4242);
+            let read = state.read().unwrap();
+            assert_eq!(read.get("pid").unwrap().as_u64().unwrap(), std::process::id() as u64);
+            assert_eq!(read.get("port").unwrap().as_u64().unwrap(), 4242);
+        }
+        // The engine is gone: the state file goes with it, so the next start
+        // doesn't look for a process that isn't there.
+        assert!(!dir.join("sidecar.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unknown_option_is_refused() {
+        assert!(parse_args_from(["--nope".to_string()]).is_err());
+    }
 }

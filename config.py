@@ -37,11 +37,12 @@ def _open_phone_mirror_pairing():
         logger.error(f'手机投屏: 打开配对窗口失败({e})')
         return False
     engine = get_engine()
-    if not engine.running:
-        engine.pair = True
-        if not engine.start():
-            logger.error('手机投屏: 投屏内核启动失败')
-            return False
+    # 一定要配对模式: 跑着的是普通内核时, 引擎会自己换成一个配对内核起来,
+    # 免得点了「配对手机」却一直等不到二维码。
+    engine.pair = True
+    if not engine.start():
+        logger.error('手机投屏: 投屏内核启动失败')
+        return False
     open_pairing_dialog(engine=engine)
     return True
 
@@ -54,6 +55,7 @@ def _start_phone_mirror_engine():
         logger.error(f'手机投屏: 投屏内核启动失败({e})')
         return False
     engine = get_engine()
+    engine.pair = False
     if engine.start():
         logger.info('手机投屏: 内核已启动, 等手机上点「允许」。')
         return True
