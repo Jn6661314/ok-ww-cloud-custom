@@ -696,10 +696,14 @@ class DeviceManager:
     def get_preferred_capture(self):
         """Return the capture method in effect for the preferred device.
 
-        devices.json 的 capture 是全局单值：从 PC/云游戏切到 MuMu 后会残留
-        'windows'，直接照它抓屏会去找启动器 exe（hwnd=0），误报"设备未连接"，
-        而 adb 其实早已连上。保存值不在当前设备支持的方法里时，回退到 app
-        config 为该设备声明的方法（MuMu 默认 ipc），再退到第一个可用方法。
+        devices.json 的 capture 是全局单值：从 PC/云游戏切到 MuMu 后可能残留
+        另一个设备类型的值（如 'browser'）。保存值不在当前设备支持的方法里时，
+        回退到 app config 为该设备声明的方法（MuMu 默认 ipc），再退到第一个
+        可用方法。
+
+        注意 'windows' 对模拟器是**合法**抓屏方式（窗口抓屏 WGC/BitBlt），
+        拉海洛方块依赖它的屏幕坐标 get_abs_cords 与 Pynput 真实键盘旋转，
+        不能当残留纠偏掉。
         """
         selected = self.config.get("capture")
         available = self.available_capture_methods()
@@ -724,7 +728,10 @@ class DeviceManager:
             return [method_name(item) for item in (methods or ['windows']) if item]
         if kind == 'browser':
             return ['browser']
-        methods = ['adb']
+        # 模拟器/安卓设备: adb + ipc(MuMu) + windows(窗口抓屏)。
+        # windows 必须保留 —— 拉海洛方块靠它拿屏幕坐标(get_abs_cords)并用
+        # Pynput 真实键盘走 MuMu 键位映射旋转方块, IPC/adb 抓屏做不到。
+        methods = ['adb', 'windows']
         emulator = device.get('emulator')
         if emulator is not None:
             try:

@@ -21,6 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ### 2026-11-27
 
+- **[v1.8.12](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.12)** — **MuMu 拉海洛方块真双指触控 + 不再要求窗口前台**：手游版旋转靠屏幕左侧圆形「旋转」按钮，操作是「一指点旋转 + 一指长按拖方块」，MuMu IPC/u2 都是单指 API 做不到。新增 `src/task/multi_touch.py`，用 ADB `sendevent` 写 `ABS_MT_SLOT` 多点触控：slot 0 拖方块、send_key('r') 走 slot 1 点旋转按钮，坐标映射实测 `物理(x,y)=(游戏y,游戏x)`，触控节点自动探测，任务中断自动释放触点。另外**修复"必须在前台"**：IPC 抓屏（从模拟器内部取帧）+ sendevent 输入都不依赖窗口前台，MuMu 可后台跑方块；方块输入改用 sendevent 后不再需要 windows 抓屏的 `get_abs_cords`，配置回退到 IPC 抓屏（保留 v1.8.11 修的启动器 exe 解析防「连不上」）。新增 17 项测试，全量 225 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**。
 - **[v1.8.11](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.11)** — **修复鸣潮已启动但 MuMu 报"未连接"**：从远控窗口/PC 切到 MuMu 时 `devices.json` 的 `capture` 残留 `windows`，`do_start()` 照它走 windows 抓屏、拿 `MuMuNxMain.exe` 启动器去 find hwnd → hwnd=0 报"设备未连接"，而 adb 其实早连上了、鸣潮也在前台。现在 `do_start()` 改用 `get_preferred_capture()` 纠偏（残留值按设备类型回退到 app config 声明的 `ipc`），windows 分支也用 `resolve_emulator_window_exe()` 解析出真正的窗口 exe。新增 10 项测试，全量 305 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**；现有配置无需手改，启动自动纠偏。
 - **[v1.8.10](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.10)** — **修复首次进配置页不显示账号按钮 + MuMu 设备列表加载慢**：云鸣潮下刚启动 ok-ww 就进多账号设置页时，「保存登录状态」「切换账号」两个按钮不出现（设备列表还没异步刷新完，`_is_cloud_device()` 判定落空）；现在设备未就绪时回退检查云游戏配置是否存在，按钮照常显示，PC/安卓下仍不显示。另外打补丁后设备下拉卡好几秒才出列表——MuMu 网桥回退对整个 ARP 表逐 IP 探测且不缓存；现在加 120 秒 TTL 缓存、探测超时 0.4→0.25 秒，刷新从十几秒降到毫秒级。新增 6 项测试，全量 295 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**。
 - **[v1.8.9](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.9)** — **修掉云鸣潮「打着打着敌人没打完就停了」**：官方云游戏是锁定图标优先 + 血条辅助的双判定，血条消失还有 3 秒宽限；我们定制的 `no_enemy_for()` 却统一用 2 秒，比宽限还短，串流延迟/技能特效让图标和血条闪断 2~3 秒就被判脱战、退出战斗去走奖励，30 秒后官方才发现战斗还在又重打。现在云游戏端单独用 6 秒窗口（PC 2 秒 / 安卓 4 秒不变），重锁时血条闪断忍耐放宽到 3 秒；不会无限续命，聚落任务的锁敌超时也不受影响。新增 10 项测试，全量 287 项通过。
@@ -341,6 +342,7 @@ src/                        新增与修改的 ok-ww 源码
   task/DailyTask.py              每日任务云端适配（活跃度多区域重试、约电台不按 Alt）
   task/RahaiBlocksTask.py        拉海洛方块（官方 v3.8.15 + 无尽模式/详情页直启 + 云/MuMu 输入分流）
   task/rahai_blocks.py           走棋算法（官方版本 + 束裁剪与 3 秒墙钟预算）
+  task/multi_touch.py            MuMu 双指触控（ADB sendevent ABS_MT_SLOT：一指点旋转按钮 + 一指拖方块）
   cloud_browser.py               按账号切换 Playwright profile 目录（纯 ok-ww 侧，不改框架）
   cloud_recovery.py              云端错误自恢复（重启浏览器 → 刷新页面 → 放弃）
   stream_window.py               远控串流窗口(试验性)：读取配置并把窗口切成当前设备

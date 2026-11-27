@@ -185,8 +185,9 @@ class BridgeFallbackCacheTest(unittest.TestCase):
 
 
 class PreferredCaptureTest(unittest.TestCase):
-    """从 PC/云游戏切到 MuMu 时 devices.json 的 capture 残留 'windows'，
-    必须按当前设备纠偏，否则明明 adb 已连上却走 windows 抓屏、hwnd=0 报"未连接"。"""
+    """devices.json 的 capture 全局单值：只有不属于当前设备的非法值才纠偏。
+    windows 抓屏对模拟器是合法方式（拉海洛方块依赖 get_abs_cords + Pynput
+    真实键盘旋转），不能当残留纠掉，否则方块玩不了。"""
 
     def make_manager(self, selected, available, device_kind='adb', declared='ipc'):
         manager = object.__new__(DeviceManager)
@@ -197,24 +198,25 @@ class PreferredCaptureTest(unittest.TestCase):
         manager.adb_capture_config = {'capture_method': declared}
         return manager
 
-    def test_stale_windows_falls_back_to_declared_ipc(self):
-        manager = self.make_manager('windows', ['adb', 'ipc'])
-        self.assertEqual(manager.get_preferred_capture(), 'ipc')
+    def test_windows_capture_kept_for_blocks(self):
+        """模拟器用户选 windows 抓屏玩方块 —— 必须保留，不能纠偏到 ipc。"""
+        manager = self.make_manager('windows', ['adb', 'windows', 'ipc'])
+        self.assertEqual(manager.get_preferred_capture(), 'windows')
 
     def test_stale_browser_falls_back_to_ipc(self):
-        manager = self.make_manager('browser', ['adb', 'ipc'])
+        manager = self.make_manager('browser', ['adb', 'windows', 'ipc'])
         self.assertEqual(manager.get_preferred_capture(), 'ipc')
 
     def test_valid_ipc_kept(self):
-        manager = self.make_manager('ipc', ['adb', 'ipc'])
+        manager = self.make_manager('ipc', ['adb', 'windows', 'ipc'])
         self.assertEqual(manager.get_preferred_capture(), 'ipc')
 
     def test_valid_adb_kept(self):
-        manager = self.make_manager('adb', ['adb', 'ipc'])
+        manager = self.make_manager('adb', ['adb', 'windows', 'ipc'])
         self.assertEqual(manager.get_preferred_capture(), 'adb')
 
     def test_no_declared_falls_back_to_first(self):
-        manager = self.make_manager('windows', ['adb', 'ipc'], declared=None)
+        manager = self.make_manager('browser', ['adb', 'windows'], declared=None)
         self.assertEqual(manager.get_preferred_capture(), 'adb')
 
     def test_windows_device_method_kept(self):
@@ -224,6 +226,34 @@ class PreferredCaptureTest(unittest.TestCase):
     def test_windows_device_stale_adb_falls_back(self):
         manager = self.make_manager('adb', ['WGC', 'BitBlt'], device_kind='windows')
         self.assertEqual(manager.get_preferred_capture(), 'WGC')
+
+
+class AvailableCaptureMethodsTest(unittest.TestCase):
+    """模拟器的可用抓屏方式必须含 windows —— 否则 windows 被当非法值纠偏，
+    方块任务拿不到 get_abs_cords 会崩。"""
+
+    def make_manager(self, emulator_type='MuMuPlayer12'):
+        manager = object.__new__(DeviceManager)
+        manager.windows_capture_config = {'capture_method': ['WGC']}
+        device = {'device': 'adb', 'imei': 'MuMuPlayer-15.0-0'}
+        if emulator_type:
+            emu = SimpleNamespace(type=emulator_type, path='C:/MuMu/nx_main/MuMuNxMain.exe')
+            device['emulator'] = emu
+        manager.get_preferred_device = Mock(return_value=device)
+        return manager
+
+    def test_mumu_offers_windows_alongside_ipc(self):
+        manager = self.make_manager()
+        methods = manager.available_capture_methods()
+        self.assertIn('windows', methods)
+        self.assertIn('ipc', methods)
+        self.assertIn('adb', methods)
+
+    def test_non_mumu_adb_offers_windows(self):
+        manager = self.make_manager(emulator_type=None)
+        methods = manager.available_capture_methods()
+        self.assertIn('windows', methods)
+        self.assertNotIn('ipc', methods)
 
 
 class EmulatorWindowExeTest(unittest.TestCase):

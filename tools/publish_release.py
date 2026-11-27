@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.12', 'v1.8.12 · MuMu 拉海洛方块真双指触控(一指旋转+一指拖方块) / MuMu Rahai Blocks two-finger touch', 'HEAD'),
     ('v1.8.11', 'v1.8.11 · 修复鸣潮已启动但 MuMu 报"未连接" / Fix MuMu "not connected" while game is running', 'HEAD'),
     ('v1.8.10', 'v1.8.10 · 修复首次进配置页不显示账号按钮 + MuMu 设备列表加载慢 / Fix account buttons on first config open + slow MuMu device list', 'HEAD'),
     ('v1.8.9', 'v1.8.9 · 修复云鸣潮战斗中误判脱战、敌人没打完就停 / Fix cloud combat stopping mid-fight', 'HEAD'),

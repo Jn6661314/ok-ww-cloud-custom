@@ -282,26 +282,27 @@ class ReturnToListTest(unittest.TestCase):
 
 
 class MumuInteractionTest(unittest.TestCase):
-    """MuMu/安卓模拟器：仍是 Windows 窗口，走 Pynput 真实键鼠触发模拟器键位映射。"""
+    """MuMu/安卓模拟器：旋转靠屏幕按钮，需真双指（sendevent 多点触控）。"""
 
-    def test_adb_uses_pynput_interaction(self):
+    def test_adb_uses_multitouch_interaction(self):
         task = make_task()
         task.is_browser = Mock(return_value=False)
         task.is_adb = Mock(return_value=True)
         task._executor.device_manager.capture_method = 'windows'
-        task._executor.device_manager.hwnd_window = object()
-        with patch('src.task.RahaiBlocksTask.PynputInteraction') as pynput:
-            self.assertIs(task._make_interaction(), pynput.return_value)
-        self.assertEqual(pynput.call_args[0][0], 'windows')
+        task._executor.device_manager.device = Mock()
+        with patch('src.task.multi_touch.MultiTouchDevice') as mtd, \
+                patch('src.task.multi_touch.MuMuMultiTouchInteraction') as interaction:
+            result = task._make_interaction()
+        self.assertIs(result, interaction.return_value)
+        mtd.assert_called_once_with(task._executor.device_manager.device)
 
-    def test_adb_clickable_follows_window_focus(self):
+    def test_adb_clickable_ignores_window_focus(self):
+        # 双指走 sendevent 直写触控设备，不要求窗口前台/焦点
         task = make_task()
         task.is_browser = Mock(return_value=False)
         task.is_adb = Mock(return_value=True)
         interaction = Mock()
         interaction.clickable = Mock(return_value=False)
-        self.assertFalse(task._clickable(interaction))
-        interaction.clickable = Mock(return_value=True)
         self.assertTrue(task._clickable(interaction))
 
     def test_adb_return_to_list_falls_back_to_back_key(self):

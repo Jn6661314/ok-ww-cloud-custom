@@ -81,6 +81,9 @@ RELATIVE_FILES = [
     # 拉海洛方块：官方 v3.8.15 + 无尽模式/详情页直启 + 云鸣潮/MuMu 输入分流
     'src/task/RahaiBlocksTask.py',
     'src/task/rahai_blocks.py',
+    # MuMu 双指触控：手游版旋转靠屏幕按钮, 用 ADB sendevent 多点触控
+    # (一指点旋转 + 一指拖方块), MuMu IPC/u2 单指 API 做不到
+    'src/task/multi_touch.py',
     # 爱弥斯：变奏入场就输出（上游要求双队友满协奏退场, 实战几乎不成立）
     'src/char/Aemeath.py',
     # 自定义轴（队伍代码/工坊）

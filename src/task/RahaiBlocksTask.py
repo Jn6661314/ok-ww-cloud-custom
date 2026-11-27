@@ -35,6 +35,17 @@ class RahaiBlocksTask(BaseTask):
         self.group_name = "Daily Activities"
         self.group_icon = task_icon("category-daily")
         self.supported_languages = ["zh_CN"]
+        self._multi_touch = None
+
+    def on_destroy(self):
+        # 双指触控: 任务被中断/停止时释放仍按下的触点, 避免"手指卡住"影响下次操作。
+        if self._multi_touch is not None:
+            try:
+                self._multi_touch.close()
+            except Exception as error:
+                self.log_warning(f"释放 MuMu 双指触控失败: {error}")
+            self._multi_touch = None
+        super().on_destroy()
 
     # --- 输入层：云鸣潮用浏览器虚拟输入，PC 客户端用真实鼠标 -------------------
 
@@ -42,19 +53,27 @@ class RahaiBlocksTask(BaseTask):
         """按设备选输入通道。
 
         - 云鸣潮: BrowserInteraction(CDP 虚拟输入), 不依赖窗口焦点
-        - MuMu/安卓模拟器: 仍是 Windows 窗口, 用 PynputInteraction 向模拟器窗口
-          发真实键盘/鼠标事件, 由 MuMu 自己的键位映射转成触屏操作(和 PC 同一条路径)
-        - PC 客户端: 同上
+        - MuMu/安卓模拟器: 手游版旋转靠屏幕左侧的「旋转」按钮, 需要真正的双指
+          （一指按住方块拖动 + 另一指点旋转按钮）。MuMu IPC/u2 都是单指 API,
+          所以用 ADB sendevent 多点触控: MuMuMultiTouchInteraction。
+        - PC 客户端: PynputInteraction(真实键盘 R 旋转 + 鼠标拖拽)
         """
         capture = self.executor.device_manager.capture_method
         if self.is_browser():
             return BrowserInteraction(capture)
+        if self.is_adb():
+            from src.task.multi_touch import MuMuMultiTouchInteraction, MultiTouchDevice
+            adb_device = self.executor.device_manager.device
+            if adb_device is None:
+                raise RuntimeError("MuMu 双指输入需要已连接的 adb 设备。")
+            self._multi_touch = MultiTouchDevice(adb_device)
+            return MuMuMultiTouchInteraction(self._multi_touch)
         return PynputInteraction(capture, self.hwnd)
 
     def _clickable(self, interaction):
-        # BrowserInteraction 走 CDP 输入，不需要窗口在前台。云鸣潮的浏览器窗口
-        # 可以被其他窗口挡住，不能要求它有系统焦点。
-        return True if self.is_browser() else interaction.clickable()
+        # Browser 走 CDP 输入、MuMu 走 sendevent 直写触控设备，都不需要窗口前台。
+        # 只有 PC 客户端的 Pynput 要求窗口有系统焦点。
+        return True if (self.is_browser() or self.is_adb()) else interaction.clickable()
 
     def _event_title(self):
         return self.ocr(.045, .04, .2, .09, match=re.compile(r"拉海洛方块"))
