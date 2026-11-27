@@ -36,6 +36,15 @@ class RahaiBlocksTask(BaseTask):
         self.group_icon = task_icon("category-daily")
         self.supported_languages = ["zh_CN"]
         self._multi_touch = None
+        # MuMu 方块旋转：手游不认 input keyevent，交给 MuMu 键位映射的真实键盘。
+        # 默认 f1（不与游戏热键 q/r/e/t/space/lshift/tab/f2/b 冲突）。
+        self.default_config.update({
+            'Rotate Key (MuMu Keymap)': 'f1',
+        })
+        self.config_description['Rotate Key (MuMu Keymap)'] = (
+            'MuMu/安卓模拟器拉海洛方块旋转键。需在 MuMu 键位映射里把此键绑到游戏内'
+            '「旋转」按钮，并选一个不与现有键位冲突的键（默认 f1）。留空则回退为点屏幕旋转按钮。'
+        )
 
     def on_destroy(self):
         # 双指触控: 任务被中断/停止时释放仍按下的触点, 避免"手指卡住"影响下次操作。
@@ -62,12 +71,19 @@ class RahaiBlocksTask(BaseTask):
         if self.is_browser():
             return BrowserInteraction(capture)
         if self.is_adb():
-            from src.task.multi_touch import MuMuMultiTouchInteraction, MultiTouchDevice
+            from src.task.multi_touch import (
+                MuMuMultiTouchInteraction, MultiTouchDevice, send_real_key,
+            )
             adb_device = self.executor.device_manager.device
             if adb_device is None:
                 raise RuntimeError("MuMu 双指输入需要已连接的 adb 设备。")
             self._multi_touch = MultiTouchDevice(adb_device)
-            return MuMuMultiTouchInteraction(self._multi_touch)
+            rotate_key = (self.config.get('Rotate Key (MuMu Keymap)') or '').strip()
+            hwnd_window = self.executor.device_manager.hwnd_window
+            return MuMuMultiTouchInteraction(
+                self._multi_touch, rotate_key=rotate_key,
+                key_sender=(lambda k, dt: send_real_key(k, hwnd_window, dt)) if rotate_key else None,
+            )
         return PynputInteraction(capture, self.hwnd)
 
     def _clickable(self, interaction):

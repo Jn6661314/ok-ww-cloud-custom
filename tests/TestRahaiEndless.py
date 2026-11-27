@@ -64,6 +64,7 @@ def make_task(names=(), board_sequence=None, score=None, goal_text=None):
     task.info_set = Mock()
     task.is_browser = Mock(return_value=True)
     task.is_adb = Mock(return_value=False)
+    task.config = {'Rotate Key (MuMu Keymap)': 'f1'}
     screen = FakeScreen(names if goal_text is None else (*names, goal_text))
     task.ocr = screen
     task.screen = screen
@@ -295,6 +296,21 @@ class MumuInteractionTest(unittest.TestCase):
             result = task._make_interaction()
         self.assertIs(result, interaction.return_value)
         mtd.assert_called_once_with(task._executor.device_manager.device)
+        # 旋转键从配置传入（真实键盘 -> MuMu 键位映射）
+        self.assertEqual(interaction.call_args.kwargs['rotate_key'], 'f1')
+        self.assertTrue(callable(interaction.call_args.kwargs['key_sender']))
+
+    def test_adb_empty_rotate_key_disables_key_sender(self):
+        task = make_task()
+        task.is_browser = Mock(return_value=False)
+        task.is_adb = Mock(return_value=True)
+        task._executor.device_manager.device = Mock()
+        task.config = {'Rotate Key (MuMu Keymap)': ''}
+        with patch('src.task.multi_touch.MultiTouchDevice'), \
+                patch('src.task.multi_touch.MuMuMultiTouchInteraction') as interaction:
+            task._make_interaction()
+        self.assertEqual(interaction.call_args.kwargs['rotate_key'], '')
+        self.assertIsNone(interaction.call_args.kwargs['key_sender'])
 
     def test_adb_clickable_ignores_window_focus(self):
         # 双指走 sendevent 直写触控设备，不要求窗口前台/焦点

@@ -135,6 +135,23 @@ class SlotManagementTest(unittest.TestCase):
         self.assertIn((EV_ABS, ABS_MT_TRACKING_ID, 1), tuples)
         self.assertIn((EV_SYN, SYN_REPORT, 0), tuples)
 
+    def test_btn_touch_pressed_on_first_down_and_released_on_last_up(self):
+        """BTN_TOUCH 漏发会让 Android 把触点当悬浮，方块拿不起来（v1.8.12 bug）。"""
+        dev, mt = self.make_mt()
+        mt.down(0, 100, 200)
+        tuples = dev.event_tuples()
+        self.assertIn((EV_KEY, BTN_TOUCH, 1), tuples)
+        # 第二指按下不应重复发 BTN_TOUCH=1
+        n_press = tuples.count((EV_KEY, BTN_TOUCH, 1))
+        mt.down(1, 300, 400)
+        self.assertEqual(dev.event_tuples().count((EV_KEY, BTN_TOUCH, 1)), n_press)
+        # 抬起第一指（还有第二指）不发 BTN_TOUCH=0
+        mt.up(0)
+        self.assertNotIn((EV_KEY, BTN_TOUCH, 0), dev.event_tuples())
+        # 抬起最后一指才清 BTN_TOUCH
+        mt.up(1)
+        self.assertIn((EV_KEY, BTN_TOUCH, 0), dev.event_tuples())
+
 
 class InteractionAdapterTest(unittest.TestCase):
     def make_interaction(self):
@@ -163,6 +180,7 @@ class InteractionAdapterTest(unittest.TestCase):
         mt.up.assert_called_once_with(0)
 
     def test_send_key_r_taps_rotate_button_on_slot1(self):
+        # 未配键位映射键 -> 回退点屏幕旋转按钮
         _, mt, it = self.make_interaction()
         it.send_key('r', down_time=.08)
         mt.tap.assert_called_once()
@@ -171,6 +189,34 @@ class InteractionAdapterTest(unittest.TestCase):
         gx, gy = mt.tap.call_args[0][1:3]
         self.assertAlmostEqual(gx, it.ROTATE_BUTTON[0])
         self.assertAlmostEqual(gy, it.ROTATE_BUTTON[1])
+
+    def test_send_key_r_prefers_keymap_key(self):
+        # 配了键位映射键 -> 发真实键盘, 不点屏幕按钮
+        mt = MultiTouchDevice(FakeAdbDevice(), device_node='/dev/input/event4')
+        mt.tap = Mock()
+        sender = Mock(return_value=True)
+        it = MuMuMultiTouchInteraction(mt, rotate_key='f1', key_sender=sender)
+        self.assertTrue(it.send_key('r', down_time=.09))
+        sender.assert_called_once_with('f1', .09)
+        mt.tap.assert_not_called()  # 不走屏幕坐标
+
+    def test_send_key_r_falls_back_if_key_sender_fails(self):
+        # 键位映射键发送失败(窗口没前置等) -> 回退点屏幕按钮
+        mt = MultiTouchDevice(FakeAdbDevice(), device_node='/dev/input/event4')
+        mt.tap = Mock()
+        sender = Mock(return_value=False)
+        it = MuMuMultiTouchInteraction(mt, rotate_key='f1', key_sender=sender)
+        it.send_key('r')
+        sender.assert_called_once()
+        mt.tap.assert_called_once()
+
+    def test_parse_mukey_common_keys(self):
+        from src.task.multi_touch import parse_mukey
+        self.assertIsNotNone(parse_mukey('f1'))
+        self.assertIsNotNone(parse_mukey('f12'))
+        self.assertIsNotNone(parse_mukey('space'))
+        self.assertIsNotNone(parse_mukey('a'))
+        self.assertIsNone(parse_mukey('not-a-key'))
 
     def test_other_keys_ignored(self):
         _, mt, it = self.make_interaction()

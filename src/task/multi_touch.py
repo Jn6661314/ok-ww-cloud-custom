@@ -111,13 +111,22 @@ class MultiTouchDevice:
         self._sendevent(EV_SYN, SYN_REPORT, 0)
 
     def down(self, slot, gx, gy):
-        """在指定槽位按下（游戏坐标）。同一 slot 重复 down 会被视为移动。"""
+        """在指定槽位按下（游戏坐标）。同一 slot 重复 down 会被视为移动。
+
+        BTN_TOUCH 必须发：Android InputReader 靠它把触点识别成「按下」，
+        只写 ABS_MT_TRACKING_ID 在部分 ROM/MuMu 版本上会被当成悬浮，
+        方块拿不起来（v1.8.12 的真实 bug）。
+        """
         self._ensure_node()
         tx, ty = self.game_to_touch(gx, gy)
         if slot not in self._active:
             self._active[slot] = self._next_tracking_id
             self._next_tracking_id += 1
         track = self._active[slot]
+        # 第一个触点按下时置 BTN_TOUCH=1（第二个触点保持 1 即可）
+        if len(self._active) == 1:
+            self._sendevent(EV_KEY, BTN_TOUCH, 1)
+            self._sync()
         self._sendevent(EV_ABS, ABS_MT_SLOT, slot)
         self._sendevent(EV_ABS, ABS_MT_POSITION_X, tx)
         self._sendevent(EV_ABS, ABS_MT_POSITION_Y, ty)
@@ -140,6 +149,10 @@ class MultiTouchDevice:
         self._sendevent(EV_ABS, ABS_MT_TRACKING_ID, -1)
         self._sync()
         self._active.pop(slot, None)
+        # 最后一个触点抬起时清 BTN_TOUCH（还有手指按着时保持 1）
+        if not self._active:
+            self._sendevent(EV_KEY, BTN_TOUCH, 0)
+            self._sync()
 
     def tap(self, slot, gx, gy, duration=0.08):
         """用指定槽位点一下（游戏坐标），不改变其他槽位的按压状态。"""
@@ -153,24 +166,83 @@ class MultiTouchDevice:
             self.up(slot)
 
 
+def parse_mukey(key):
+    """把配置里的键名解析成 pynput 能接受的对象（None = 无法解析）。"""
+    from pynput import keyboard
+    text = str(key).strip().lower()
+    special = {
+        'esc': keyboard.Key.esc, 'escape': keyboard.Key.esc,
+        'enter': keyboard.Key.enter, 'return': keyboard.Key.enter,
+        'space': keyboard.Key.space, ' ': keyboard.Key.space,
+        'tab': keyboard.Key.tab,
+        'shift': keyboard.Key.shift, 'lshift': keyboard.Key.shift_l,
+        'rshift': keyboard.Key.shift_r,
+        'ctrl': keyboard.Key.ctrl, 'control': keyboard.Key.ctrl,
+        'lctrl': keyboard.Key.ctrl_l, 'rctrl': keyboard.Key.ctrl_r,
+        'alt': keyboard.Key.alt, 'lalt': keyboard.Key.alt_l, 'ralt': keyboard.Key.alt_r,
+    }
+    if text in special:
+        return special[text]
+    if text.startswith('f') and text[1:].isdigit() and 1 <= int(text[1:]) <= 12:
+        return getattr(keyboard.Key, text)
+    if len(text) == 1:
+        return text  # 字母/数字/反引号等单字符，pynput 直接接受
+    return None
+
+
+def send_real_key(key, hwnd_window=None, down_time=0.08):
+    """发真实键盘事件触发 MuMu 键位映射（手游不认 input keyevent）。
+
+    Pynput 的按键只送到前台窗口，发送前先把模拟器窗口切前台（项目现有模式，
+    见 BaseWWTask._adb_focus_window）。返回是否成功发出。
+    """
+    parsed = parse_mukey(key)
+    if parsed is None:
+        return False
+    if hwnd_window is not None:
+        try:
+            is_foreground = getattr(hwnd_window, 'is_foreground', None)
+            bring_to_front = getattr(hwnd_window, 'bring_to_front', None)
+            if callable(is_foreground) and not is_foreground():
+                if callable(bring_to_front):
+                    bring_to_front()
+                    time.sleep(0.05)
+                if callable(is_foreground) and not is_foreground():
+                    return False
+        except Exception:
+            pass  # 桩对象/无前置判据：不阻断按键
+    try:
+        from pynput import keyboard
+        controller = keyboard.Controller()
+        controller.press(parsed)
+        time.sleep(min(max(down_time, 0.01), 0.2))
+        controller.release(parsed)
+        return True
+    except Exception:
+        return False
+
+
 class MuMuMultiTouchInteraction:
-    """把拉海洛方块用的交互接口映射到双指触控。
+    """把拉海洛方块用的交互接口映射到 MuMu 输入。
 
     方块任务用一套接口：move / mouse_down / mouse_up / send_key / click。
     这里：
-      * slot 0 = 拖动方块的手指（move / mouse_down / mouse_up）
-      * send_key('r') = slot 1 点屏幕左侧旋转按钮（第二指）
+      * slot 0 = 拖动方块的手指（move / mouse_down / mouse_up），sendevent 免前台
+      * send_key('r') = 旋转方块，优先走「配置的键位映射键」（真实键盘 ->
+        MuMu 键位映射 -> 游戏内旋转按钮）；未配置时回退到 slot 1 点屏幕旋转按钮。
     ``_place()`` 无需改动即可在 MuMu 上工作。
     """
 
     # 旋转按钮在游戏逻辑坐标(2048x1152)中的位置（截图实测，左侧圆形按钮）
     ROTATE_BUTTON = (247, 800)
 
-    def __init__(self, multi_touch, screenshot=None):
+    def __init__(self, multi_touch, screenshot=None, rotate_key=None, key_sender=None):
         self.mt = multi_touch
         self.screenshot = screenshot  # 可选：每次操作后刷新画面用
         self.capture = None
         self._down_pos = None
+        self.rotate_key = rotate_key      # 配置里的键位映射键名（如 'f1'）
+        self.key_sender = key_sender      # callable(key, down_time) -> bool
 
     def clickable(self):
         # 触屏输入不要求窗口前台/焦点（sendevent 直接写设备节点）
@@ -194,9 +266,19 @@ class MuMuMultiTouchInteraction:
 
     def send_key(self, key, down_time=0.08):
         if str(key).lower() == 'r':
-            # 第二指点击屏幕旋转按钮（slot 1，不干扰 slot 0 的拖动）
+            # 首选：用户配置的 MuMu 键位映射键（真实键盘 -> 键位映射 -> 旋转按钮）。
+            # 这样旋转坐标由键位映射负责，不受模拟器窗口尺寸/缩放影响。
+            if self.rotate_key and self.key_sender:
+                try:
+                    if self.key_sender(self.rotate_key, down_time):
+                        return True
+                except Exception:
+                    pass
+            # 兜底：没配键位映射键时，第二指点屏幕旋转按钮（slot 1，不干扰 slot 0 拖动）
             self.mt.tap(1, *self.ROTATE_BUTTON, duration=down_time)
+            return True
         # 其他键手游不认，忽略
+        return False
 
     def send_key_down(self, key):
         pass
