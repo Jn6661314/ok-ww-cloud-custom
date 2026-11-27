@@ -1,0 +1,51 @@
+# 内置投屏内核 nectarlink-sidecar —— 独立构建版
+#
+# 上游(https://github.com/thtbee/nectarlink)的这个 crate 是 workspace 的一员,
+# 依赖项用 .workspace = true 继承。ok-ww 仓库里这份是独立的一份, 依赖项写死版本,
+# nectarlink-core / nectarlink-protocol 改成 git 依赖直接指向上游仓库。
+#
+# 编译:
+#   cd nectarlink-sidecar-src && cargo build --release
+#
+# 详见同目录的 README.md。
+
+[package]
+name = "nectarlink-sidecar"
+description = "Headless NectarLink mirroring engine, for embedding in another app"
+license = "MPL-2.0"
+version = "0.1.5"
+edition = "2024"
+rust-version = "1.97"
+authors = ["The NectarLink contributors"]
+repository = "https://github.com/thtbee/nectarlink"
+
+[dependencies]
+nectarlink-core = { git = "https://github.com/thtbee/nectarlink", branch = "main" }
+nectarlink-protocol = { git = "https://github.com/thtbee/nectarlink", branch = "main" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
+
+# The Media Foundation calls are COM calls: they need `unsafe`, which the
+# workspace forbids everywhere else.
+[lints.rust]
+unsafe_code = "allow"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# 上游 workspace 用 [patch.crates-io] 换掉了 iroh 的 mDNS 实现, 但那套机制
+# 只在 workspace 根目录生效, 对 git 依赖不适用, 所以这里自带一份补丁版本。
+# 补丁内容见 third_party/iroh-mdns-address-lookup/NECTARLINK.md。
+[patch.crates-io]
+iroh-mdns-address-lookup = { path = "third_party/iroh-mdns-address-lookup" }

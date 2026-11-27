@@ -21,3 +21,6 @@ workshop_cache/codes/
 .idea/
 .vscode/
 .DS_Store
+
+# Rust 构建产物（内置投屏内核源码）
+nectarlink-sidecar-src/target/
