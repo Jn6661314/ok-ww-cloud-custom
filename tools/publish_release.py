@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.14', 'v1.8.14 · MuMu 方块拖拽改用 input motionevent（修复落点错位）/ Blocks drag via input motionevent', 'HEAD'),
     ('v1.8.13', 'v1.8.13 · MuMu 方块旋转改走可配置键位映射键 / MuMu Blocks rotation via configurable keymap key', 'HEAD'),
     ('v1.8.12', 'v1.8.12 · MuMu 拉海洛方块真双指触控(一指旋转+一指拖方块) / MuMu Rahai Blocks two-finger touch', 'HEAD'),
     ('v1.8.11', 'v1.8.11 · 修复鸣潮已启动但 MuMu 报"未连接" / Fix MuMu "not connected" while game is running', 'HEAD'),

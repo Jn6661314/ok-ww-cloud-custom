@@ -72,12 +72,15 @@ class RahaiBlocksTask(BaseTask):
             return BrowserInteraction(capture)
         if self.is_adb():
             from src.task.multi_touch import (
-                MuMuMultiTouchInteraction, MultiTouchDevice, send_real_key,
+                AdbMotionEventDevice, MuMuMultiTouchInteraction, send_real_key,
             )
             adb_device = self.executor.device_manager.device
             if adb_device is None:
-                raise RuntimeError("MuMu 双指输入需要已连接的 adb 设备。")
-            self._multi_touch = MultiTouchDevice(adb_device)
+                raise RuntimeError("MuMu 触控输入需要已连接的 adb 设备。")
+            # 用 input motionevent 走逻辑显示坐标（1920x1080），由 Android 自动
+            # 旋转到物理触屏；不再用 sendevent 手算 (gy,gx) 转置（那个映射漏了
+            # 90° 旋转的轴翻转，落点会镜像/错位）。
+            self._multi_touch = AdbMotionEventDevice(adb_device)
             rotate_key = (self.config.get('Rotate Key (MuMu Keymap)') or '').strip()
             hwnd_window = self.executor.device_manager.hwnd_window
             return MuMuMultiTouchInteraction(

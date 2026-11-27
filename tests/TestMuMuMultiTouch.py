@@ -19,6 +19,7 @@ from src.task.multi_touch import (  # noqa: E402
     ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_SLOT, ABS_MT_TRACKING_ID,
     EV_ABS, EV_KEY, EV_SYN, BTN_TOUCH, SYN_REPORT,
     GAME_H, GAME_W, MultiTouchDevice, MuMuMultiTouchInteraction,
+    AdbMotionEventDevice,
 )
 
 
@@ -239,6 +240,66 @@ class InteractionAdapterTest(unittest.TestCase):
         _, mt, it = self.make_interaction()
         it.close()
         mt.close.assert_called_once()
+
+
+class MotionEventDeviceTest(unittest.TestCase):
+    """input motionevent 走逻辑显示坐标(1920x1080)，不做 sendevent 的手算转置。"""
+
+    def make(self):
+        dev = FakeAdbDevice()
+        return dev, AdbMotionEventDevice(dev)
+
+    def test_game_coord_maps_identity_scale_to_display(self):
+        # 2048x1152 逻辑 -> 1920x1080 显示：等比缩放，x/y 不交换、不翻转
+        _, d = self.make()
+        self.assertEqual(d.game_to_touch(GAME_W, GAME_H), (1920, 1080))
+        self.assertEqual(d.game_to_touch(GAME_W / 2, GAME_H / 2), (960, 540))
+        self.assertEqual(d.game_to_touch(0, 0), (0, 0))
+
+    def test_down_move_up_use_motionevent_with_display_coords(self):
+        dev, d = self.make()
+        d.down(0, GAME_W / 2, GAME_H / 2)   # 逻辑中心 -> 显示 (960,540)
+        d.move(0, GAME_W / 4, GAME_H / 4)   # -> 显示 (480,270)
+        d.up(0)
+        self.assertEqual(
+            dev.events,
+            [
+                ['input', 'motionevent', 'DOWN', '960', '540'],
+                ['input', 'motionevent', 'MOVE', '480', '270'],
+                ['input', 'motionevent', 'UP', '480', '270'],
+            ],
+        )
+
+    def test_rotate_button_display_coord_matches_screenshot(self):
+        # 旋转按钮在画面约 (232,750)；换算回来必须仍是画面坐标，不能变 (750,232)
+        _, d = self.make()
+        x, y = d.game_to_touch(232 / 1920 * GAME_W, 750 / 1080 * GAME_H)
+        self.assertAlmostEqual(x, 232, delta=2)
+        self.assertAlmostEqual(y, 750, delta=2)
+
+    def test_up_without_down_is_noop(self):
+        dev, d = self.make()
+        d.up(5)
+        self.assertEqual(dev.events, [])
+
+    def test_close_releases_active_slots(self):
+        dev, d = self.make()
+        d.down(0, 1024, 576)
+        d.down(1, 512, 288)
+        d.close()
+        ups = [e for e in dev.events if e[2] == 'UP']
+        self.assertEqual(len(ups), 2)
+        self.assertEqual(d._active, {})
+
+    def test_drag_and_tap_do_not_leak_touch(self):
+        dev, d = self.make()
+        d.down(0, 1024, 576)
+        d.tap(1, 256, 800, duration=0.01)
+        d.up(0)
+        self.assertEqual(d._active, {})
+        actions = [e[2] for e in dev.events]
+        self.assertEqual(actions.count('DOWN'), 2)
+        self.assertEqual(actions.count('UP'), 2)
 
 
 if __name__ == '__main__':

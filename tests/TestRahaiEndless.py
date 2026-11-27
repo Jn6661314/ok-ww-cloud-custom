@@ -283,7 +283,7 @@ class ReturnToListTest(unittest.TestCase):
 
 
 class MumuInteractionTest(unittest.TestCase):
-    """MuMu/安卓模拟器：旋转靠屏幕按钮，需真双指（sendevent 多点触控）。"""
+    """MuMu/安卓模拟器：input motionevent 单指拖拽 + 键位映射键旋转。"""
 
     def test_adb_uses_multitouch_interaction(self):
         task = make_task()
@@ -291,7 +291,7 @@ class MumuInteractionTest(unittest.TestCase):
         task.is_adb = Mock(return_value=True)
         task._executor.device_manager.capture_method = 'windows'
         task._executor.device_manager.device = Mock()
-        with patch('src.task.multi_touch.MultiTouchDevice') as mtd, \
+        with patch('src.task.multi_touch.AdbMotionEventDevice') as mtd, \
                 patch('src.task.multi_touch.MuMuMultiTouchInteraction') as interaction:
             result = task._make_interaction()
         self.assertIs(result, interaction.return_value)
@@ -306,14 +306,14 @@ class MumuInteractionTest(unittest.TestCase):
         task.is_adb = Mock(return_value=True)
         task._executor.device_manager.device = Mock()
         task.config = {'Rotate Key (MuMu Keymap)': ''}
-        with patch('src.task.multi_touch.MultiTouchDevice'), \
+        with patch('src.task.multi_touch.AdbMotionEventDevice'), \
                 patch('src.task.multi_touch.MuMuMultiTouchInteraction') as interaction:
             task._make_interaction()
         self.assertEqual(interaction.call_args.kwargs['rotate_key'], '')
         self.assertIsNone(interaction.call_args.kwargs['key_sender'])
 
     def test_adb_clickable_ignores_window_focus(self):
-        # 双指走 sendevent 直写触控设备，不要求窗口前台/焦点
+        # motionevent 走系统输入，不要求窗口前台/焦点
         task = make_task()
         task.is_browser = Mock(return_value=False)
         task.is_adb = Mock(return_value=True)

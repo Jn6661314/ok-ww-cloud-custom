@@ -166,6 +166,64 @@ class MultiTouchDevice:
             self.up(slot)
 
 
+class AdbMotionEventDevice:
+    """用 Android `input motionevent` 发持久触点（逻辑显示坐标）。
+
+    Android 10+ 支持 ``input motionevent DOWN|MOVE|UP x y``。它传的是
+    **逻辑显示坐标**，与截图/画面一致（横屏 1920x1080），由系统
+    InputFlinger 自动旋转到物理触屏——不需要 sendevent 那种手算
+    ``(gy, gx)`` 转置。这正是 sendevent 方案落点错位的根源：横屏
+    1920x1080 到竖屏物理 1080x1920 必须做 90° 旋转（要翻一个轴），
+    而纯转置等于沿对角线镜像，导致落点「高度差很远」。
+
+    实测依据：``input tap 712 343`` 用画面坐标能直接点中弹窗按钮，
+    证明 input 命令的坐标就是画面坐标，系统旋转层是好的。
+
+    限制：motionevent 是单指协议（一条手势序列只有一个触点），做不了
+    真正双指。但拉海洛方块的旋转已交给 MuMu 键位映射（真实键盘），
+    拖拽只需单指，所以够用。``slot`` 参数保留只为接口兼容。
+    """
+
+    DISPLAY_W, DISPLAY_H = 1920, 1080
+
+    def __init__(self, adb_device):
+        self.device = adb_device
+        self._active = {}  # slot -> (display_x, display_y)
+
+    def game_to_touch(self, gx, gy):
+        """2048x1152 逻辑坐标 -> 1920x1080 显示坐标（等比缩放，无旋转）。"""
+        return (round(gx / GAME_W * self.DISPLAY_W),
+                round(gy / GAME_H * self.DISPLAY_H))
+
+    def _cmd(self, action, x, y):
+        return self.device.shell(
+            ['input', 'motionevent', action, str(x), str(y)])
+
+    def down(self, slot, gx, gy):
+        x, y = self.game_to_touch(gx, gy)
+        self._active[slot] = (x, y)
+        self._cmd('DOWN', x, y)
+
+    def move(self, slot, gx, gy):
+        x, y = self.game_to_touch(gx, gy)
+        self._active[slot] = (x, y)
+        self._cmd('MOVE', x, y)
+
+    def up(self, slot):
+        pos = self._active.pop(slot, None)
+        if pos:
+            self._cmd('UP', *pos)
+
+    def tap(self, slot, gx, gy, duration=0.08):
+        self.down(slot, gx, gy)
+        time.sleep(duration)
+        self.up(slot)
+
+    def close(self):
+        for slot in list(self._active):
+            self.up(slot)
+
+
 def parse_mukey(key):
     """把配置里的键名解析成 pynput 能接受的对象（None = 无法解析）。"""
     from pynput import keyboard
