@@ -180,23 +180,27 @@ class DeviceManager:
 
         Args:
             title: 窗口标题关键字, 字符串会被编译成忽略大小写的正则; 也可直接传 re.Pattern。
+                   传 None / 空串时进入"列出所有窗口"模式: 清掉所有过滤, 让设备下拉里
+                   出现所有可见窗口(含远控窗口), 由用户手动选——不再静默退回默认 PC 客户端。
             force_pynput: 强制用 PynputInteraction(真实键鼠事件), 远控软件基本都要求这样。
 
         Returns:
             bool: 是否成功切换。
         """
-        if not title:
-            return False
-        pattern = title if hasattr(title, 'search') else re.compile(str(title).strip(), re.IGNORECASE)
-        if not getattr(pattern, 'pattern', ''):
-            return False
         if self.windows_capture_config is None:
             logger.warning('stream window mode needs a windows device config')
             return False
 
+        pattern = None
+        if title:
+            pattern = title if hasattr(title, 'search') else re.compile(str(title).strip(), re.IGNORECASE)
+            if not getattr(pattern, 'pattern', ''):
+                pattern = None
+
         self.stream_window_mode = True
         # 清掉鸣潮客户端的 exe / 窗口类限制, 改成只按标题匹配远控窗口;
         # top_hwnd_class 原本用于 PC 登录器, 对远控窗口没有意义。
+        # 没填标题时 pattern=None, update_pc_device 会枚举所有可见窗口供用户在下拉里选。
         self.windows_capture_config['exe'] = None
         self.windows_capture_config['title'] = pattern
         self.windows_capture_config['hwnd_class'] = None
@@ -209,8 +213,9 @@ class DeviceManager:
             # 拉变形或引入黑边, 所以直接禁用自动调整; 分辨率不对仍然会告警。
             self.hwnd_window.try_resize_to = lambda *args, **kwargs: False
             # HwndWindow 在 __init__ 里已经按 PC 客户端参数建好了, 这里重新指向远控窗口。
+            # 无标题模式传 None, 待用户在设备下拉里选定窗口后再由框架填具体窗口。
             self.hwnd_window.update_window(pattern, None, 0, 0, -1, None, None)
-        logger.info(f'stream window mode enabled, title pattern: {pattern.pattern}')
+        logger.info(f'stream window mode enabled, title pattern: {getattr(pattern, "pattern", None)}')
         return True
 
     def check_stream_window_resolution(self):

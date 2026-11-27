@@ -94,10 +94,12 @@ class ApplyTest(unittest.TestCase):
         self.assertFalse(stream_window.apply_stream_window(self._global_config(False, 'UU远程'), manager))
         manager.set_stream_window.assert_not_called()
 
-    def test_empty_title_keeps_pc_device(self):
+    def test_empty_title_lists_all_windows(self):
+        # 开了远控但没填标题: 仍要进入列出所有窗口模式, 不能静默退回 PC 客户端。
         manager = Mock()
-        self.assertFalse(stream_window.apply_stream_window(self._global_config(True, '   '), manager))
-        manager.set_stream_window.assert_not_called()
+        manager.set_stream_window.return_value = True
+        self.assertTrue(stream_window.apply_stream_window(self._global_config(True, '   '), manager))
+        manager.set_stream_window.assert_called_once_with(None, force_pynput=True)
 
     def test_without_device_manager(self):
         self.assertFalse(stream_window.apply_stream_window(self._global_config(True, 'UU远程'), None))
@@ -129,11 +131,23 @@ class SetStreamWindowTest(unittest.TestCase):
         self.assertIsNone(manager.win_interaction_class)
         self.assertNotIn('interaction', manager.config)
 
-    def test_empty_title_rejected(self):
+    def test_empty_title_lists_all_windows(self):
+        # 空标题 = 清掉所有过滤, 让 update_pc_device 枚举所有可见窗口供用户在下拉里选。
         manager = bare_device_manager()
-        self.assertFalse(manager.set_stream_window('  '))
-        self.assertFalse(manager.stream_window_mode)
-        self.assertEqual(manager.windows_capture_config['exe'], ['Client-Win64-Shipping.exe'])
+        self.assertTrue(manager.set_stream_window('  '))
+        self.assertTrue(manager.stream_window_mode)
+        windows = manager.windows_capture_config
+        self.assertIsNone(windows['exe'])
+        self.assertIsNone(windows['title'])
+        self.assertIsNone(windows['hwnd_class'])
+        self.assertIsNone(windows['top_hwnd_class'])
+        self.assertIs(manager.win_interaction_class, PynputInteraction)
+
+    def test_none_title_lists_all_windows(self):
+        manager = bare_device_manager()
+        self.assertTrue(manager.set_stream_window(None))
+        self.assertTrue(manager.stream_window_mode)
+        self.assertIsNone(manager.windows_capture_config['title'])
 
     def test_without_windows_config(self):
         manager = bare_device_manager()
@@ -201,6 +215,25 @@ class UpdatePcDeviceTest(unittest.TestCase):
 
         self.assertEqual(manager.device_dict, {},
                          '远控窗口没开时不应留下未连接设备, 否则会误报游戏路径不存在')
+
+    def test_empty_filters_enumerate_all_windows(self):
+        # 修复目标: 开了远控没填标题时, 下拉要列出所有窗口(含远控窗口),
+        # 而不是只剩鸣潮 PC 客户端。set_stream_window(None) 把三个过滤都清空后
+        # 就应命中这条枚举分支。
+        manager = bare_device_manager()
+        manager.set_stream_window(None)
+        manager.device_dict = {}
+        windows = [(10, 'DESKTOP-ABC - Moonlight', 'Moonlight.exe', 'C:\\moonlight.exe'),
+                   (20, 'UU远程-被控电脑', 'UURemote.exe', 'C:\\uu.exe')]
+        with patch('ok.util.window.find_all_visible_windows', return_value=windows), \
+                patch('ok.util.window.get_window_bounds',
+                      side_effect=[(0, 0, 0, 0, 1920, 1080, 1), (0, 0, 0, 0, 1600, 900, 1)]):
+            manager.update_pc_device()
+
+        self.assertEqual(len(manager.device_dict), 2)
+        nicks = {d['nick'] for d in manager.device_dict.values()}
+        self.assertIn('DESKTOP-ABC - Moonlight', nicks)
+        self.assertIn('UU远程-被控电脑', nicks)
 
 
 class GlobalsHookTest(unittest.TestCase):

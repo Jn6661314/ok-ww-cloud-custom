@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.17', 'v1.8.17 · 修复开了远控窗口模式但设备下拉还是 PC 客户端 / Fix stream-window device dropdown', 'HEAD'),
     ('v1.8.16', 'v1.8.16 · MuMu 方块改用落点预览视觉闭环（不再猜触控坐标）/ Blocks drag via visual servo', 'HEAD'),
     ('v1.8.15', 'v1.8.15 · MuMu 方块拖拽改用 IPC 触控（修复 x/y 落点大幅偏移）/ Blocks drag via MuMu IPC touch', 'HEAD'),
     ('v1.8.14', 'v1.8.14 · MuMu 方块拖拽改用 input motionevent（修复落点错位）/ Blocks drag via input motionevent', 'HEAD'),

@@ -84,9 +84,6 @@ def apply_stream_window(global_config=None, device_manager=None):
     enabled, title, force_pynput = settings
     if not enabled:
         return False
-    if not title:
-        logger.info('远控/串流窗口已开启但没填窗口标题, 继续使用默认 PC 设备。')
-        return False
     if device_manager is None:
         logger.warning('远控/串流窗口: 取不到 device_manager, 跳过。')
         return False
@@ -94,9 +91,16 @@ def apply_stream_window(global_config=None, device_manager=None):
     if setter is None:
         logger.warning('远控/串流窗口: 当前框架版本不支持, 跳过。')
         return False
-    if not setter(title, force_pynput=force_pynput):
+    # 未填标题也启用: 进入"列出所有窗口"模式, 让用户在设备下拉里手动选远控窗口,
+    # 而不是静默退回默认 PC 客户端(那样下拉里根本看不到远控窗口)。
+    if not setter(title or None, force_pynput=force_pynput):
         return False
-    logger.info(f'远控/串流窗口模式已启用: 标题匹配 "{title}", 输入方式 '
-                f'{"Pynput(真实键鼠)" if force_pynput else "由框架决定"}。'
-                f'请确认被控电脑上游戏全屏 16:9, 且远控窗口客户区也是 16:9 无黑边。')
+    if title:
+        logger.info(f'远控/串流窗口模式已启用: 标题匹配 "{title}", 输入方式 '
+                    f'{"Pynput(真实键鼠)" if force_pynput else "由框架决定"}。'
+                    f'请确认被控电脑上游戏全屏 16:9, 且远控窗口客户区也是 16:9 无黑边。')
+    else:
+        logger.info('远控/串流窗口模式已启用(未填标题): 设备下拉会列出所有可见窗口, '
+                    '请从中选远控/串流窗口; 建议填 Preset 或 Window Title 以便自动匹配。'
+                    '请确认被控电脑上游戏全屏 16:9, 且远控窗口客户区也是 16:9 无黑边。')
     return True
