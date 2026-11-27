@@ -61,6 +61,62 @@ def find_sidecar() -> Path:
         f'找不到投屏内核 {SIDECAR_EXE}; 试过: ' + ', '.join(str(c) for c in candidates))
 
 
+def _parse_status_lines(line):
+    """从一行输出里取出状态消息(每条一个 JSON 对象)。
+
+    内核的状态走 stdout, 正常情况下每行就是一个 JSON。但内核也可能往 stdout
+    写别的东西(比如提示语), 那样会把后面的 JSON 粘在同一行, 整行就不合法了。
+    所以这里不只试整行: 找不到就从第一个 '{' 开始, 按大括号配平把 JSON 对象
+    逐个抠出来, 免得一条消息被别的东西带走了就永远收不到。
+    """
+    try:
+        message = json.loads(line)
+        return [message] if isinstance(message, dict) else []
+    except Exception:
+        pass
+    messages = []
+    index = 0
+    while True:
+        start = line.find('{', index)
+        if start < 0:
+            break
+        depth = 0
+        end = -1
+        in_string = False
+        escaped = False
+        for position in range(start, len(line)):
+            char = line[position]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end = position + 1
+                    break
+        if end < 0:
+            break
+        try:
+            message = json.loads(line[start:end])
+        except Exception:
+            message = None
+        if isinstance(message, dict):
+            messages.append(message)
+        index = end
+    if not messages:
+        logger.debug(f'手机投屏: 引擎输出里没有 JSON: {line[:200]}')
+    return messages
+
+
 class SidecarEngine:
     """投屏内核的进程包装: 拉起它、读它的状态、把画面端口交出去。
 
@@ -239,12 +295,8 @@ class SidecarEngine:
                 line = raw.decode('utf-8', 'ignore').strip()
                 if not line:
                     continue
-                try:
-                    message = json.loads(line)
-                except Exception:
-                    logger.debug(f'手机投屏: 引擎输出不是 JSON: {line[:200]}')
-                    continue
-                self._on_message(message)
+                for message in _parse_status_lines(line):
+                    self._on_message(message)
         except Exception as e:
             logger.debug(f'手机投屏: 读引擎输出结束({e})')
 

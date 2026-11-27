@@ -412,12 +412,23 @@ async fn pair(node: &Node) -> Result<()> {
 }
 
 /// Asks the user to compare the code the phone shows.
+///
+/// The prompt goes to stderr on purpose: stdout carries the status lines as
+/// JSON, one per line, and a prompt without a newline would end up glued to
+/// the front of the next JSON line — which the embedder would then fail to
+/// parse, losing that message.
 async fn confirm_from_stdin(code: &str) -> Result<bool> {
     let code = code.to_string();
     tokio::task::spawn_blocking(move || -> Result<bool> {
         use std::io::Write;
-        print!("Does the other device show {} {}? [y/N] ", &code[..3], &code[3..]);
-        std::io::stdout().flush()?;
+        let mut err = std::io::stderr().lock();
+        // The code is six digits; split it in the middle so it reads easier.
+        let (head, tail) = match code.char_indices().nth(3) {
+            Some((at, _)) => (&code[..at], &code[at..]),
+            None => (code.as_str(), ""),
+        };
+        let _ = write!(err, "Does the other device show {head} {tail}? [y/N] ");
+        let _ = err.flush();
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer)?;
         Ok(matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
