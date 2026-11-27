@@ -38,6 +38,26 @@ SIDECAR_EXE = 'nectarlink-sidecar.exe'
 # 内核的报错都在 stderr 里, 这里留最后几行, 出错时好说清楚原因。
 STDERR_TAIL_LINES = 8
 
+# 手机端把「这台设备的自动重连」关掉时, 它给出的关闭理由。
+#
+# 这个开关存在**手机**的数据库里(按设备存的 peer_toggles 表), 协议里没有一条
+# 消息能改对端的开关 —— 所以 ok-ww 关不掉也打不开它, 只能在认出来之后把话说
+# 清楚。手机上的那个按钮在设备在线时写的是「断开」、离线时写的是「停止重连」,
+# 点一次都会把这个开关永久关掉, 很容易误触。
+RECONNECT_OFF_REASON = 'reconnect off'
+
+# 认出来之后说给用户的话(要能照着做)。
+RECONNECT_OFF_HINT = ('手机端把「这台设备的自动重连」关掉了, 所以它一直在拒绝这台电脑。'
+                      '请在手机上的 NectarLink 里打开设备列表, 找到名字是 ok-ww 的这个设备, '
+                      '点一下「重连」, 再回来重新投屏。')
+
+
+def _looks_like_reconnect_off(text) -> bool:
+    """这段内核输出是不是在说"手机端关了这台设备的自动重连"。"""
+    if not text:
+        return False
+    return RECONNECT_OFF_REASON in str(text).lower()
+
 
 def _app_root() -> Path:
     """ok-ww 的安装目录。"""
@@ -251,6 +271,8 @@ class SidecarEngine:
         self._lock = threading.Lock()
         # 当前跑着的内核是哪种模式: 'plain' 或者 'pair'。
         self._mode = None
+        # 手机端是不是明确拒绝了(它把自动重连关了)。认出来就别再等超时了。
+        self.reconnect_off = False
         # 内核 stderr 的最后几行, 用来解释"为什么起不来"。
         self._stderr = deque(maxlen=STDERR_TAIL_LINES * 4)
 
@@ -323,6 +345,10 @@ class SidecarEngine:
     @property
     def failure_reason(self) -> str:
         """内核起不来的原因; 没有就说没有。"""
+        if self.reconnect_off:
+            # 认出"手机端关了自动重连"时, 别把内核那句原始错误丢给用户:
+            # 那句既看不出是手机那边的事, 也看不出该点哪里。
+            return RECONNECT_OFF_HINT
         if self.last_error:
             return self.last_error
         return self.stderr_tail
@@ -455,6 +481,7 @@ class SidecarEngine:
                 return False
             self._mode = 'pair' if self.pair else 'plain'
             self._stderr.clear()
+            self.reconnect_off = False
             self.last_error = None
             self._thread = threading.Thread(target=self._read_output, name='phone-mirror-sidecar', daemon=True)
             self._thread.start()
@@ -469,6 +496,10 @@ class SidecarEngine:
         while time.monotonic() < deadline:
             if self._ready.is_set() and self.port:
                 return True
+            if self.reconnect_off:
+                # 手机明确拒绝了: 再等下去只是把界面卡满超时, 原因早就知道了。
+                time.sleep(0.3)
+                return False
             if not self.running and self.process is not None:
                 # 内核退了: 等一下读输出的线程, 把最后那条错误捞上来。
                 time.sleep(0.3)
@@ -541,6 +572,12 @@ class SidecarEngine:
                 if not line:
                     continue
                 logger.debug(f'手机投屏内核: {line}')
+                # 手机端拒绝连接的理由就藏在一条 INFO 日志里
+                # (peer=… reason=… reconnect off), 所以这句要在"过滤日常日志"
+                # **之前**认 —— 不然最关键的那句正好会被当成噪声扔掉。
+                if _looks_like_reconnect_off(line):
+                    self._note_reconnect_off()
+                    continue
                 # 内核的日志里一大半是 tracing 的 INFO, 那些进日志就够了;
                 # 这里只留可能有用的(WARNING/ERROR, 以及内核自己抛的错误),
                 # 免得"起不来的原因"里全是局域网广播的碎话。
@@ -551,9 +588,27 @@ class SidecarEngine:
         except Exception as e:
             logger.debug(f'手机投屏: 读内核错误输出结束({e})')
 
+    def _note_reconnect_off(self):
+        """记下"手机端把这台设备的自动重连关了", 并换成一句能照做的话。"""
+        with self._lock:
+            if self.reconnect_off:
+                return
+            self.reconnect_off = True
+            self.status_message = RECONNECT_OFF_HINT
+            self.last_error = RECONNECT_OFF_HINT
+        logger.warning(f'手机投屏: {RECONNECT_OFF_HINT}')
+
     def _on_message(self, message):
         kind = message.get('type')
         self.status = message
+        # 手机端的拒绝可能从三种状态里露出来(内核认出后的 notice、重试时的
+        # retry、最后放弃时的 error), 认出来就别再往下当普通状态处理了 ——
+        # 否则界面最后显示的会是一句"还没就绪"。
+        if kind in ('retry', 'notice', 'error') and (
+                message.get('code') == 'reconnect_off'
+                or _looks_like_reconnect_off(message.get('message'))):
+            self._note_reconnect_off()
+            return
         if kind == 'ready':
             self.port = int(message.get('port', 0)) or None
             self._ready.set()

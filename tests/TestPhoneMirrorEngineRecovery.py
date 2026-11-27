@@ -5,7 +5,8 @@
   2. 残留内核会被清掉 —— 两个内核用同一个设备身份会互相干扰;
   3. 点「配对手机」时, 跑着普通内核要换成配对内核;
   4. 查进程的办法不会误杀(尤其不能拿 os.kill(pid, 0) 试探, 那在 Windows 上
-     是直接 TerminateProcess)。
+     是直接 TerminateProcess);
+  5. 手机端把这台设备的自动重连关掉(v1.8.24)时, 别看错成"手机没上线"。
 
 这些是 v1.8.23 修的东西: 以前内核一起来就因为「设备离线」退出, 而它的
 报错被丢进了 DEVNULL, 界面上只剩一句「投屏内核还没就绪」。
@@ -46,6 +47,15 @@ if mode == 'waiting':
     print('{"type":"device","id":"abc"}', flush=True)
     print('{"type":"waiting","message":"等手机上线…"}', flush=True)
     time.sleep(30)
+if mode == 'reconnect-off':
+    print('{"type":"notice","code":"reconnect_off","message":"手机端把自动重连关掉了"}', flush=True)
+    print('{"type":"error","message":"手机端把「这台设备的自动重连」关掉了, 所以它一直在拒绝这台电脑。"}', flush=True)
+    sys.exit(1)
+if mode == 'reconnect-off-log':
+    print('2026-01-01T00:00:00Z  INFO nectarlink_core::node: peer=abc reason=application closed: '
+          'error_code: 0, reason: b"reconnect off" disconnected', file=sys.stderr, flush=True)
+    print('Error: "等了 120 秒也没能连上手机"', file=sys.stderr, flush=True)
+    sys.exit(1)
 if mode == 'online':
     print('{"type":"online","id":"abc"}', flush=True)
     time.sleep(30)
@@ -132,6 +142,63 @@ class TestSidecarErrorReporting(unittest.TestCase):
         self.addCleanup(engine.stop)
         self.assertTrue(engine.wait_ready(timeout=10))
         self.assertEqual(engine.port, 54321)
+
+
+class TestPhoneRefusedTheConnection(unittest.TestCase):
+    """手机端把「这台设备的自动重连」关掉时, 得说清楚该点哪里。
+
+    这个开关存在手机本地数据库里(按设备存), 协议上没有一条消息能改对端的开关,
+    所以 ok-ww 关不掉也打不开 —— 只能认出来, 然后让用户手点一下。认不出来的话,
+    用户看到的是"手机没上线", 会跑去查网络、查防火墙, 方向全错。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.script = Path(self.tmp.name) / 'fake_sidecar.py'
+        self.script.write_text(FAKE_SIDECAR, encoding='utf-8')
+        self.addCleanup(self.tmp.cleanup)
+
+    def _engine(self, mode, **kwargs):
+        return FakeEngine(str(self.script), mode, data_dir=self.tmp.name, **kwargs)
+
+    def test_the_notice_becomes_advice_the_user_can_follow(self):
+        engine = self._engine('reconnect-off')
+        self.assertTrue(engine.start())
+        self.addCleanup(engine.stop)
+        self.assertFalse(engine.wait_ready(timeout=10))
+        self.assertTrue(engine.reconnect_off)
+        # 提示得是"在手机上点重连", 不是内核那句原始英文错误。
+        self.assertIn('重连', engine.failure_reason)
+        self.assertIn('重连', engine.status_message)
+
+    def test_the_refusal_hidden_in_a_routine_log_line_is_recognised(self):
+        """拒绝的理由藏在内核的一条 INFO 日志里 —— 那句不能被当成噪声扔掉。
+
+        内核是用 tracing::info! 打这行的(reason=b"reconnect off"), 而这里默认
+        把 INFO 当日常日志过滤。识别必须发生在过滤之前, 否则最关键的一句正好没了。
+        """
+        engine = self._engine('reconnect-off-log')
+        self.assertTrue(engine.start())
+        self.addCleanup(engine.stop)
+        self.assertFalse(engine.wait_ready(timeout=10))
+        self.assertTrue(engine.reconnect_off)
+        self.assertIn('重连', engine.failure_reason)
+
+    def test_a_plain_network_error_is_not_mistaken_for_a_refusal(self):
+        engine = self._engine('error')
+        self.assertTrue(engine.start())
+        self.addCleanup(engine.stop)
+        self.assertFalse(engine.wait_ready(timeout=10))
+        self.assertFalse(engine.reconnect_off)
+        self.assertIn('device is offline', engine.failure_reason)
+
+    def test_the_phrase_is_recognised_whatever_it_is_capitalised(self):
+        recognise = phone_mirror_engine._looks_like_reconnect_off
+        self.assertTrue(recognise('closed by application: reason: b"reconnect off"'))
+        self.assertTrue(recognise('Reconnect Off'))
+        self.assertFalse(recognise('device is offline'))
+        self.assertFalse(recognise(''))
+        self.assertFalse(recognise(None))
 
 
 class TestStaleEngines(unittest.TestCase):

@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.24', 'v1.8.24 · 手机投屏连不上：手机端把「这台设备的自动重连」关掉了 / The phone turned reconnecting off for this device', 'HEAD'),
     ('v1.8.23', 'v1.8.23 · 修好手机投屏启动不了（内核等手机上线，不再秒退）/ Fix the mirroring engine quitting right after start', 'HEAD'),
     ('v1.8.22', 'v1.8.22 · 修好配对二维码（之前根本没码）/ Fix the pairing QR code', 'HEAD'),
     ('v1.8.21', 'v1.8.21 · 两个手机投屏菜单合成一个（内置引擎/桌面端）/ One phone-mirroring menu, engine or desktop', 'HEAD'),

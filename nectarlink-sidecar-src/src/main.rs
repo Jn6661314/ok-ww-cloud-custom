@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use err::{Note, Result, fail};
 use nectarlink_core::{
-    MIRROR_VIEW, DeviceId, DeviceInfo, DeviceKind, LinkState, MirrorConfig, MirrorInput, MirrorSink, MirrorStart, Node,
+    MIRROR_VIEW, DeviceId, DeviceInfo, DeviceKind, MirrorConfig, MirrorInput, MirrorSink, MirrorStart, Node,
     NodeConfig, NodeEvent, PairingEvent, Platform, PowerLevel, TouchAction,
 };
 use serde_json::json;
@@ -206,38 +206,14 @@ async fn run() -> Result<()> {
         display: None,
     };
 
-    // 节点刚起来时, 和手机之间的连接通常还没建好(后台在拨号重连)。这时候直接
-    // 要求投屏, 内核会拿到 "device is offline" 然后自己退出 —— 所以先等手机上线。
-    // 上游 CLI 也是先等设备在线再开口的。
-    let wait = Duration::from_secs(cli.wait_seconds);
-    wait_until_online(&node, target, wait).await?;
-
-    // 要求手机开始投屏(手机上会弹一个"允许")。等待期间连接可能又断了一次,
-    // 那就再等等重试 —— 手机刚同意时连接经常要重建一次。
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match node.mirror_start(target, options.clone()).await {
-            Ok(()) => break,
-            Err(err) => {
-                let retryable = matches!(
-                    err,
-                    nectarlink_core::Error::Offline
-                        | nectarlink_core::Error::Network(_)
-                        | nectarlink_core::Error::Timeout
-                );
-                if !retryable || attempt >= 5 {
-                    return Err::<(), _>(err).note("the phone did not agree to share its screen");
-                }
-                emit(json!({
-                    "type": "retry",
-                    "attempt": attempt,
-                    "message": err.to_string(),
-                }));
-                wait_until_online(&node, target, wait).await?;
-            }
-        }
-    }
+    // 要求手机开始投屏(手机上会弹一个"允许")。
+    //
+    // 节点刚起来时, 和手机之间的连接通常还没建好(后台还在拨号), 这时候要求投屏
+    // 会直接拿到 "device is offline"。上游 CLI 是先等设备在线再开口的; 这里不单独
+    // 等, 而是一边等一边试 —— 因为**只有试着开口, 才看得见手机拒绝的理由**。
+    // 手机把「这台设备的自动重连」关掉时, 它会在握手之后立刻用 "reconnect off"
+    // 把连接关掉: 光盯着"在线不在线"永远等不到, 那句话只出现在这次尝试的错误里。
+    mirror_with_retries(&node, target, &options, Duration::from_secs(cli.wait_seconds)).await?;
 
     // The phone asks its user; wait for the stream to start.
     loop {
@@ -277,48 +253,77 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-/// Waits until the phone is reachable, so the mirror request doesn't bounce.
+/// 手机端把「这台设备的自动重连」关掉时, 它给出的关闭理由。
 ///
-/// A node that just started is still dialing the phone in the background: the
-/// session isn't up yet, and asking for the screen then fails with "device is
-/// offline". The upstream CLI waits for the device to come online first, and so
-/// does this.
-async fn wait_until_online(node: &Node, id: DeviceId, timeout: Duration) -> Result<()> {
+/// 这个开关(peer_toggles 表的 reconnect 行)存在**手机**的数据库里: 协议里没有
+/// 一条消息能改对端的开关, 所以我们这边关不掉也打不开它, 只能在认出来之后把话
+/// 说清楚, 让用户手点一下。手机上的那个按钮在设备在线时写的是「断开」、离线时
+/// 写的是「停止重连」, 点一次都会把这个开关永久关掉 —— 所以很容易误触。
+const RECONNECT_OFF_REASON: &str = "reconnect off";
+
+/// 认出来之后说给用户的话。
+const RECONNECT_OFF_HINT: &str = "手机端把「这台设备的自动重连」关掉了, 所以它一直在拒绝这台电脑。\
+请在手机上的 NectarLink 里打开设备列表, 找到这个设备(名字是 ok-ww)点一下「重连」, 再回来重新投屏。";
+
+/// 这个错误是不是"手机端关了自动重连"。
+///
+/// 核心把那层网络错误压成了一个字符串(`Error::Network(String)`), 关闭理由就
+/// 在里面, 所以只能按文字认。
+fn is_reconnect_off(err: &nectarlink_core::Error) -> bool {
+    matches!(err, nectarlink_core::Error::Network(text) if text.contains(RECONNECT_OFF_REASON))
+}
+
+/// 反复要求手机投屏, 直到它答应、超时、或者明确拒绝。
+///
+/// 每次失败都等半秒再试: 手机刚上线、或者刚同意的时候, 连接经常要重建一次。
+async fn mirror_with_retries(
+    node: &Node,
+    target: DeviceId,
+    options: &MirrorStart,
+    timeout: Duration,
+) -> Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut announced = false;
     let mut last_note = std::time::Instant::now();
+    let mut attempt = 0u32;
     loop {
-        // The store's own view of the link: Online means the phone and this
-        // node have a session, which is what the mirror request needs.
-        let online = node
-            .paired_devices()
-            .map(|devices| {
-                devices
-                    .iter()
-                    .any(|d| d.id == id && matches!(d.link, LinkState::Online { .. }))
-            })
-            .unwrap_or(false);
-        if online {
-            emit(json!({"type": "online", "id": id.to_string()}));
-            return Ok(());
+        attempt += 1;
+        match node.mirror_start(target, options.clone()).await {
+            Ok(()) => {
+                // 开口成功就说明手机到了: 接下来才是手机上那个"允许"。
+                emit(json!({"type": "online", "id": target.to_string()}));
+                return Ok(());
+            }
+            Err(err) => {
+                // 手机明确说"我把这台设备的自动重连关了": 再等下去只会等满超时,
+                // 然后把原因说成"手机没上线", 那是错的。
+                if is_reconnect_off(&err) {
+                    emit(json!({
+                        "type": "notice",
+                        "code": "reconnect_off",
+                        "message": RECONNECT_OFF_HINT,
+                    }));
+                    return fail(RECONNECT_OFF_HINT);
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err::<(), _>(err).note(&format!(
+                        "等了 {} 秒也没能连上手机(手机的 NectarLink 要在运行, 并且和这台电脑在同一网络)",
+                        timeout.as_secs()
+                    ));
+                }
+                // 说一声在等, 隔一会儿再说一次: 界面显示这句话, 一声不响看着像卡住。
+                if !announced || last_note.elapsed() >= Duration::from_secs(10) {
+                    announced = true;
+                    last_note = std::time::Instant::now();
+                    emit(json!({
+                        "type": "waiting",
+                        "message": "等手机上线(手机上的 NectarLink 要在运行)…",
+                        "attempt": attempt,
+                    }));
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
         }
-        if tokio::time::Instant::now() >= deadline {
-            return fail(format!(
-                "the phone didn't come online within {} seconds (is the NectarLink app running on it?)",
-                timeout.as_secs()
-            ));
-        }
-        // Say we're waiting, then keep saying so now and then: the embedder
-        // shows this to the user, and silence looks like a hang.
-        if !announced || last_note.elapsed() >= Duration::from_secs(10) {
-            announced = true;
-            last_note = std::time::Instant::now();
-            emit(json!({
-                "type": "waiting",
-                "message": "等手机上线(手机上的 NectarLink 要在运行)…",
-            }));
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
 
@@ -740,5 +745,18 @@ mod tests {
     #[test]
     fn an_unknown_option_is_refused() {
         assert!(parse_args_from(["--nope".to_string()]).is_err());
+    }
+
+    /// 手机拒绝的理由藏在网络错误的文字里: 认不出来就只能等满超时, 然后把
+    /// 原因错说成"手机没上线"——那会把用户引到完全错的方向去查。
+    #[test]
+    fn the_phones_refusal_is_recognised() {
+        let refused = nectarlink_core::Error::Network(
+            "closed by application: error code 0: reconnect off".to_string(),
+        );
+        assert!(is_reconnect_off(&refused));
+        // 别的网络错误不能被当成拒绝, 否则会把"手机没开"误报成"自动重连关了"。
+        assert!(!is_reconnect_off(&nectarlink_core::Error::Network("timed out".to_string())));
+        assert!(!is_reconnect_off(&nectarlink_core::Error::Offline));
     }
 }
