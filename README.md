@@ -19,8 +19,9 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 按**日**汇总，完整改动明细见 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases)（中英双语）。
 
-### 2026-11-26
+### 2026-11-27
 
+- **[v1.8.11](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.11)** — **修复鸣潮已启动但 MuMu 报"未连接"**：从远控窗口/PC 切到 MuMu 时 `devices.json` 的 `capture` 残留 `windows`，`do_start()` 照它走 windows 抓屏、拿 `MuMuNxMain.exe` 启动器去 find hwnd → hwnd=0 报"设备未连接"，而 adb 其实早连上了、鸣潮也在前台。现在 `do_start()` 改用 `get_preferred_capture()` 纠偏（残留值按设备类型回退到 app config 声明的 `ipc`），windows 分支也用 `resolve_emulator_window_exe()` 解析出真正的窗口 exe。新增 10 项测试，全量 305 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**；现有配置无需手改，启动自动纠偏。
 - **[v1.8.10](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.10)** — **修复首次进配置页不显示账号按钮 + MuMu 设备列表加载慢**：云鸣潮下刚启动 ok-ww 就进多账号设置页时，「保存登录状态」「切换账号」两个按钮不出现（设备列表还没异步刷新完，`_is_cloud_device()` 判定落空）；现在设备未就绪时回退检查云游戏配置是否存在，按钮照常显示，PC/安卓下仍不显示。另外打补丁后设备下拉卡好几秒才出列表——MuMu 网桥回退对整个 ARP 表逐 IP 探测且不缓存；现在加 120 秒 TTL 缓存、探测超时 0.4→0.25 秒，刷新从十几秒降到毫秒级。新增 6 项测试，全量 295 项通过。**需重跑 `restore.py` 并重启 ok-ww 才生效**。
 - **[v1.8.9](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.9)** — **修掉云鸣潮「打着打着敌人没打完就停了」**：官方云游戏是锁定图标优先 + 血条辅助的双判定，血条消失还有 3 秒宽限；我们定制的 `no_enemy_for()` 却统一用 2 秒，比宽限还短，串流延迟/技能特效让图标和血条闪断 2~3 秒就被判脱战、退出战斗去走奖励，30 秒后官方才发现战斗还在又重打。现在云游戏端单独用 6 秒窗口（PC 2 秒 / 安卓 4 秒不变），重锁时血条闪断忍耐放宽到 3 秒；不会无限续命，聚落任务的锁敌超时也不受影响。新增 10 项测试，全量 287 项通过。
 - **[v1.8.8](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.8)** — **战斗奖励副本出错后现场续打，不再重进**：无音区等副本中途报错时，旧流程重启浏览器后会被 `ensure_main()` 按 Esc 踢出副本、再从 F2 图鉴重进，白丢这一场。现在出错瞬间先记录是否在副本，重启后优先续打未结束的战斗、探测战斗是否结束、发现「领取」F/宝箱就按 F 领奖，再正常退出副本；续打成功跳过二次 `ensure_main`，剩余任务照常执行。不在副本/探测失败/云端会话已回首页时安全回退；可用任务配置 `Cloud Resume Reward Dungeon: false` 关闭。新增 13 项测试，全量 277 项通过。
@@ -366,7 +367,7 @@ ok/util/window.py          WGC 可用性判定不再被 Win11 门禁误伤
 tools/                      安装、patch、工坊缓存下载与 Release 发布脚本
   publish_release.py         把 releases/*.md 发布成 GitHub Release（自动打 tag）
 releases/                   各版本的完整改动明细（中英双语，发布脚本的正文来源）
-tests/                      新增/修改的单元测试（295 项）
+tests/                      新增/修改的单元测试（305 项）
 docs/                       多账号配置说明、备份恢复说明
 workshop_cache/             工坊离线索引（teams.json + teams/*.json）
 restore.py / 一键恢复.bat   官方更新覆盖后的一键恢复

@@ -184,6 +184,89 @@ class BridgeFallbackCacheTest(unittest.TestCase):
         self.assertIn('MuMu15', manager._bridge_cache)
 
 
+class PreferredCaptureTest(unittest.TestCase):
+    """从 PC/云游戏切到 MuMu 时 devices.json 的 capture 残留 'windows'，
+    必须按当前设备纠偏，否则明明 adb 已连上却走 windows 抓屏、hwnd=0 报"未连接"。"""
+
+    def make_manager(self, selected, available, device_kind='adb', declared='ipc'):
+        manager = object.__new__(DeviceManager)
+        manager.config = {'capture': selected}
+        manager.get_preferred_device = Mock(
+            return_value={'device': device_kind, 'imei': 'MuMuPlayer-15.0-0'})
+        manager.available_capture_methods = Mock(return_value=available)
+        manager.adb_capture_config = {'capture_method': declared}
+        return manager
+
+    def test_stale_windows_falls_back_to_declared_ipc(self):
+        manager = self.make_manager('windows', ['adb', 'ipc'])
+        self.assertEqual(manager.get_preferred_capture(), 'ipc')
+
+    def test_stale_browser_falls_back_to_ipc(self):
+        manager = self.make_manager('browser', ['adb', 'ipc'])
+        self.assertEqual(manager.get_preferred_capture(), 'ipc')
+
+    def test_valid_ipc_kept(self):
+        manager = self.make_manager('ipc', ['adb', 'ipc'])
+        self.assertEqual(manager.get_preferred_capture(), 'ipc')
+
+    def test_valid_adb_kept(self):
+        manager = self.make_manager('adb', ['adb', 'ipc'])
+        self.assertEqual(manager.get_preferred_capture(), 'adb')
+
+    def test_no_declared_falls_back_to_first(self):
+        manager = self.make_manager('windows', ['adb', 'ipc'], declared=None)
+        self.assertEqual(manager.get_preferred_capture(), 'adb')
+
+    def test_windows_device_method_kept(self):
+        manager = self.make_manager('WGC', ['WGC', 'BitBlt'], device_kind='windows')
+        self.assertEqual(manager.get_preferred_capture(), 'WGC')
+
+    def test_windows_device_stale_adb_falls_back(self):
+        manager = self.make_manager('adb', ['WGC', 'BitBlt'], device_kind='windows')
+        self.assertEqual(manager.get_preferred_capture(), 'WGC')
+
+
+class EmulatorWindowExeTest(unittest.TestCase):
+    """MuMuNxMain.exe 是启动器, 真正游戏窗口属于 MuMuNxDevice.exe。
+    windows 抓屏分支必须解析出窗口 exe, 否则 hwnd=0 报"未连接"。"""
+
+    def test_mumu_launcher_resolved(self):
+        from ok.device.DeviceManager import resolve_emulator_window_exe
+        resolved = resolve_emulator_window_exe(
+            'C:/Program Files/Netease/MuMu/nx_main/MuMuNxMain.exe', 'MuMuPlayer-15.0-0')
+        self.assertTrue(resolved.endswith('MuMuNxDevice.exe'), resolved)
+
+    def test_non_mumu_exe_unchanged(self):
+        from ok.device.DeviceManager import resolve_emulator_window_exe
+        self.assertEqual(
+            resolve_emulator_window_exe('C:/emu/other.exe', 'Other'),
+            'C:/emu/other.exe')
+
+    def test_do_start_windows_branch_uses_resolved_exe(self):
+        """do_start 走 windows 分支时, ensure_hwnd 收到的必须是解析后的窗口 exe。"""
+        manager = object.__new__(DeviceManager)
+        launcher = 'C:/Program Files/Netease/MuMu/nx_main/MuMuNxMain.exe'
+        preferred = {
+            'device': 'adb', 'imei': 'MuMuPlayer-15.0-0', 'full_path': launcher,
+            'player_id': 0, 'connected': True,
+            'emulator': SimpleNamespace(name='MuMuPlayer-15.0-0'),
+        }
+        manager.config = {'capture': 'windows', 'interaction': ''}
+        manager.get_preferred_device = Mock(return_value=preferred)
+        manager.get_preferred_capture = Mock(return_value='windows')
+        manager.get_resolution = Mock(return_value=(1920, 1080))
+        manager.ensure_hwnd = Mock()
+        manager.hwnd_window = SimpleNamespace(title='MuMuNxDevice')
+        manager.use_windows_capture = Mock()
+        manager.win_interaction_class = None
+        manager.capture_method = Mock()
+        manager.adb_start_game = Mock()
+        with patch.object(DeviceManager, 'check_stream_window_resolution', Mock()):
+            manager.do_start(notify=False)
+        passed_exe = manager.ensure_hwnd.call_args.args[1]
+        self.assertTrue(passed_exe.endswith('MuMuNxDevice.exe'), passed_exe)
+
+
 class AndroidWorldTest(unittest.TestCase):
 
     def test_black_frame_detected_separately(self):

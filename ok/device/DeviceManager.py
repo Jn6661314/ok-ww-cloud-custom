@@ -696,14 +696,20 @@ class DeviceManager:
     def get_preferred_capture(self):
         """Return the capture method in effect for the preferred device.
 
-        The saved ``capture`` value can belong to another device type (for
-        example ``browser`` after switching to a PC window), so fall back to the
-        device's first available method in that case.
+        devices.json 的 capture 是全局单值：从 PC/云游戏切到 MuMu 后会残留
+        'windows'，直接照它抓屏会去找启动器 exe（hwnd=0），误报"设备未连接"，
+        而 adb 其实早已连上。保存值不在当前设备支持的方法里时，回退到 app
+        config 为该设备声明的方法（MuMu 默认 ipc），再退到第一个可用方法。
         """
         selected = self.config.get("capture")
         available = self.available_capture_methods()
         if not available or selected in available:
             return selected
+        preferred = self.get_preferred_device()
+        if preferred and preferred.get('device') == 'adb':
+            declared = (getattr(self, 'adb_capture_config', None) or {}).get('capture_method')
+            if declared in available:
+                return method_name(declared)
         return available[0]
 
     def available_capture_methods(self, device=None):
@@ -867,8 +873,14 @@ class DeviceManager:
             preferred['connected'] = self.capture_method.connected()
         else:
             width, height = self.get_resolution()
-            if self.config.get('capture') == "windows":
-                self.ensure_hwnd(None, preferred.get('full_path'), width, height, preferred['player_id'])
+            # 安卓设备下 capture 必须按当前设备纠偏：从 PC/云游戏切过来时
+            # devices.json 可能残留 'windows'，照它走会去找启动器 exe 而 hwnd=0，
+            # 明明 adb 已连上却报"设备未连接"。
+            capture = self.get_preferred_capture()
+            if capture == "windows":
+                window_exe = resolve_emulator_window_exe(
+                    preferred.get('full_path'), getattr(preferred.get('emulator'), 'name', None))
+                self.ensure_hwnd(None, window_exe, width, height, preferred['player_id'])
                 logger.info(f'do_start use windows capture {self.hwnd_window.title}')
                 self.use_windows_capture()
                 # 模拟器窗口抓屏 + 窗口消息交互(如 adb 配置里 interaction=PostMessage):
@@ -882,7 +894,7 @@ class DeviceManager:
                     else:
                         self.interaction.capture = self.capture_method
             else:
-                if self.config.get('capture') == 'ipc':
+                if capture == 'ipc':
                     if not isinstance(self.capture_method, NemuIpcCaptureMethod):
                         if self.capture_method is not None:
                             self.capture_method.close()
