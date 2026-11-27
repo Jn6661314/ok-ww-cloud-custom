@@ -860,7 +860,9 @@ class BaseCombatTask(CombatCheck):
         tried_keys = set()
         start = time.time()
         while True:
-            if not (isinstance(switch_to, ShoreKeeper) and has_intro):
+            in_team, current_index, _ = self.in_team()
+            already_switched = in_team and current_index == switch_to.index
+            if not already_switched and not (isinstance(switch_to, ShoreKeeper) and has_intro):
                 self.check_combat()
             now = time.time()
             if self.is_adb():
@@ -869,51 +871,56 @@ class BaseCombatTask(CombatCheck):
                 # 会返回 -1, 用它会让下面 current_index 判定永远失败并等 10 秒
                 # 抛 failed switch chars, 表现为切人卡死/战斗反复中断。
                 current_index = getattr(self, '_android_current_index', 0)
+                in_team = True
             else:
                 _, current_index, _ = self.in_team()
-            if current_index == current_char.index:
+            if in_team and current_index == current_char.index:
                 self.update_lib_portrait_icon()
-                refreshed_has_intro = has_intro or current_char.is_con_full()
-                if refreshed_has_intro != has_intro:
-                    has_intro = refreshed_has_intro
-                    switch_to = self._choose_switch_target(current_char, has_intro,
-                                                           target_low_con=target_low_con)
-                    if not switch_to or switch_to == current_char:
-                        logger.warning(
-                            f"{current_char} can't find next char to switch to after intro refresh, "
-                            f"performing too fast add a normal attack")
-                        current_char.continues_normal_attack(0.2)
-                        return
-                    logger.info(f'switch_next_char refreshed target after intro became available: {switch_to}')
+                if not has_intro and current_char.is_con_full():
+                    self.sleep(0.02)
+                    if current_char.is_con_full():
+                        has_intro = True
+                        switch_to = self._choose_switch_target(current_char, has_intro,
+                                                               target_low_con=target_low_con)
+                        if not switch_to or switch_to == current_char:
+                            logger.warning(
+                                f"{current_char} can't find next char to switch to after intro "
+                                f"refresh, performing too fast add a normal attack")
+                            current_char.continues_normal_attack(0.2)
+                            return
+                        logger.info(
+                            f'switch_next_char refreshed target after intro became available: '
+                            f'{switch_to}')
                 self._apply_intro_flags(current_char, switch_to, has_intro)
                 if has_intro:
                     current_char.f_break(check_f_on_switch=True)
-            if switch_to.wait_switch():
-                self.click()
-                self.sleep(0.1)
-                continue
-            if now - last_click > 0.1:
-                if self.is_adb():
-                    # 安卓端 MuMu 只有 1/2 两颗切换键, 映射按配置的编队动态
-                    # 推导(键 1 -> 编队靠后的非出战队友), 不做战斗中的画面
-                    # 识别(用户要求: 战斗特效会干扰 OCR, 以编队为准)。
-                    # 发键后推进脚本维护的逻辑下标, 否则下面
-                    # `current_index != switch_to.index` 会一直成立, 10 秒后
-                    # 抛 raise_not_in_combat('failed switch chars')。
-                    switch_key = self.android_switch_key(switch_to.index, exclude=tried_keys)
-                    self.send_key(switch_key)
-                    tried_keys.add(switch_key)
-                    self._android_current_index = switch_to.index
-                    self.log_debug(f'switch_next_char(android): key {switch_key}, '
-                                   f'logical index -> {switch_to.index}')
-                else:
-                    self.send_key(switch_to.index + 1)
-                self.sleep(0.001)
-                last_click = now
-                self.log_debug('switch not detected, send click')
-                self.click()
-                self.sleep(0.001)
-            in_team, current_index, size = self.in_team()
+            if not already_switched:
+                if switch_to.wait_switch():
+                    self.click()
+                    self.sleep(0.1)
+                    continue
+                if now - last_click > 0.1:
+                    if self.is_adb():
+                        # 安卓端 MuMu 只有 1/2 两颗切换键, 映射按配置的编队动态
+                        # 推导(键 1 -> 编队靠后的非出战队友), 不做战斗中的画面
+                        # 识别(用户要求: 战斗特效会干扰 OCR, 以编队为准)。
+                        # 发键后推进脚本维护的逻辑下标, 否则下面
+                        # `current_index != switch_to.index` 会一直成立, 10 秒后
+                        # 抛 raise_not_in_combat('failed switch chars')。
+                        switch_key = self.android_switch_key(switch_to.index, exclude=tried_keys)
+                        self.send_key(switch_key)
+                        tried_keys.add(switch_key)
+                        self._android_current_index = switch_to.index
+                        self.log_debug(f'switch_next_char(android): key {switch_key}, '
+                                       f'logical index -> {switch_to.index}')
+                    else:
+                        self.send_key(switch_to.index + 1)
+                    self.sleep(0.001)
+                    last_click = now
+                    self.log_debug('switch not detected, send click')
+                    self.click()
+                    self.sleep(0.001)
+                in_team, current_index, _ = self.in_team()
             if self.is_adb():
                 # 安卓端始终用脚本维护的逻辑下标, in_team() 在切人动画期间
                 # 会因 HUD 圆形头像消失返回 -1, 不能用它判定切人是否完成。
@@ -1060,7 +1067,12 @@ class BaseCombatTask(CombatCheck):
     def switch_healer(self):
         if self.switch_healer_enabled():
             current_char = self.get_current_char()
-            has_healer = any(char and char.is_healer for char in self.chars)
+            has_healer = any(
+                char and char.is_healer
+                and char.get_switch_priority(current_char=current_char, has_intro=False)
+                > SwitchPriority.NO
+                for char in self.chars
+            )
             if current_char and not current_char.is_healer and has_healer:
                 current_char.switch_other_char(allow_auto_combat=True)
 

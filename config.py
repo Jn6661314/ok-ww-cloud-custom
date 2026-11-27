@@ -11,7 +11,7 @@ from src.phone_mirror_config import (MODE_DESKTOP, MODE_ENGINE,
 from src.task.process_feature import process_feature
 from src.task.task_icons import task_icon
 
-version = "v3.8.15"
+version = "v3.8.18"
 
 logger = Logger.get_logger(__name__)
 
@@ -441,6 +441,12 @@ config = {
         'check_auto_hdr': True,
         'check_night_light': True,
         'force_no_night_light': False,
+    },
+    # Optional: run the PC game in a Windows child session so tasks never move the
+    # user's own mouse or keyboard. Uses the 'windows' settings above to find the game.
+    'child_session': {
+        'resolution': (1920, 1080),
+        'nick': 'Wuthering Waves (Child Session)',
     },
     # 本地安卓模拟器入口（MuMu/雷电等）：ADB 设备会出现在设备选择列表。
     # 抓屏默认走 MuMu IPC（快, 且支持长按重击）；非 MuMu 模拟器没有 ipc 通道时,

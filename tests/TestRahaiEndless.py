@@ -116,6 +116,12 @@ class EndlessDetectionTest(unittest.TestCase):
         self.assertTrue(task._endless_ingame())
         self.assertEqual(task._endless_goal(), 9999)
 
+    def test_normal_stage_board_is_not_endless(self):
+        """普通关卡进对局后同样有活动标题 + 棋盘, 不能因此判成无尽模式。"""
+        task = make_task(['拉海洛方块', '关卡目标', '困难', '积分', '0/2'],
+                         board_sequence=stable_boards())
+        self.assertFalse(task._endless_ingame())
+
     def test_endless_goal_missing(self):
         task = make_task(['拉海洛方块', '无尽模式'])
         self.assertIsNone(task._endless_goal())

@@ -148,13 +148,15 @@ class RahaiBlocksTask(BaseTask):
                      or self.ocr(.0, .10, .35, .25, match=ENDLESS_INGAME_RE)))
 
     def _endless_ingame(self):
-        """已在无尽模式对局内（玩法弹窗未关 / 局内计分 UI 可见 / 棋盘可见）。"""
+        """已在无尽模式对局内（玩法弹窗未关 / 局内计分 UI 可见）。
+
+        不能用「棋盘可见」兜底: 普通关卡进对局后同样有活动标题 + 棋盘,
+        那样任何普通关卡都会被当成无尽模式, 失败时被记成"已通关"。
+        """
         if not self._event_title():
             return False
-        if (self.ocr(.0, .10, .7, .75, match=ENDLESS_POPUP_RE)
-                or self.ocr(.0, .10, .35, .25, match=ENDLESS_INGAME_RE)):
-            return True
-        return bool(self._playable_board())
+        return bool(self.ocr(.0, .10, .7, .75, match=ENDLESS_POPUP_RE)
+                    or self.ocr(.0, .10, .35, .25, match=ENDLESS_INGAME_RE))
 
     def _endless_goal(self):
         """无尽模式目标分数（局内文案「达到9999分结算可得首通奖励」）。"""
@@ -215,25 +217,29 @@ class RahaiBlocksTask(BaseTask):
         return self.ocr(.25, .45, 1.0, .98, match="立即前往")
 
     def _return_to_list(self):
-        if self._stage_details():
-            self.click(.942, .06, after_sleep=.45)
-        go_now = self.wait_until(self._go_now_button, time_out=3)
-        if go_now:
-            self.log_info("退回了活动主页，点击「立即前往」返回关卡列表。")
-            self.click(go_now[0], after_sleep=.8)
-        stages = self.wait_until(self._stage_list, time_out=5)
-        if not stages and self.is_adb():
-            # 手游端右上角 X 的坐标与 PC 不同, 可能关不掉详情页;
-            # 用返回键(模拟器键位映射里 esc -> 返回/菜单)兜底。
-            self.log_info("手游端返回关卡列表失败，尝试安卓返回键。")
-            self.send_key('esc', after_sleep=.8)
-            go_now = self.wait_until(self._go_now_button, time_out=2)
+        """回到关卡列表; 详情页/无尽页/结算页可能要多点几次返回。"""
+        for attempt in range(3):
+            if self._stage_details() or self._endless_page() or attempt:
+                self.click(.942, .06, after_sleep=.45)
+            go_now = self.wait_until(self._go_now_button, time_out=3)
             if go_now:
+                self.log_info("退回了活动主页，点击「立即前往」返回关卡列表。")
                 self.click(go_now[0], after_sleep=.8)
             stages = self.wait_until(self._stage_list, time_out=5)
-        if not stages:
-            raise RuntimeError("挑战结束后无法返回关卡列表。")
-        return stages
+            if stages:
+                return stages
+            if self.is_adb():
+                # 手游端右上角 X 的坐标与 PC 不同, 可能关不掉详情页;
+                # 用返回键(模拟器键位映射里 esc -> 返回/菜单)兜底。
+                self.log_info("手游端返回关卡列表失败，尝试安卓返回键。")
+                self.send_key('esc', after_sleep=.8)
+                go_now = self.wait_until(self._go_now_button, time_out=2)
+                if go_now:
+                    self.click(go_now[0], after_sleep=.8)
+                stages = self.wait_until(self._stage_list, time_out=5)
+                if stages:
+                    return stages
+        raise RuntimeError("挑战结束后无法返回关卡列表。")
 
     def _leave_button(self):
         if self.ocr(.33, .45, .67, .52, match=re.compile(r"退出挑战|关卡进度")):
@@ -421,6 +427,15 @@ class RahaiBlocksTask(BaseTask):
                 stages = self._return_to_list()
             elif self._endless_ingame():
                 self.log_info("检测到无尽模式对局，直接加入继续游玩。")
+                try:
+                    self._challenge_endless(interaction)
+                except ChallengeFailed as error:
+                    self.log_warning(f"无尽模式挑战失败：{error}")
+                stages = self._return_to_list()
+            elif self._endless_page():
+                # 无尽模式的详情页没有「关卡目标」也没有难度页签, 只认
+                # _stage_details() 会落到下面的报错分支。
+                self.log_info("当前已在无尽模式页面，直接开始。")
                 try:
                     self._challenge_endless(interaction)
                 except ChallengeFailed as error:

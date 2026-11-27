@@ -70,34 +70,41 @@ class CloudConfigTypeTest(unittest.TestCase):
         task = MultiAccountDailyTask.__new__(MultiAccountDailyTask)
         self.assertFalse(MultiAccountDailyTask._is_cloud_device(task))
 
-    # --- 首次进入: 设备列表还没刷新出来时也要显示云按钮 -------------------
+    # --- 首次进入: 设备列表还没刷新出来时按「已保存的设备标识」判断 -------------
 
     @staticmethod
-    def _manager(preferred, browser_config):
+    def _manager(preferred, saved_device):
         import types as _types
         return _types.SimpleNamespace(
             get_preferred_device=lambda: preferred,
-            browser_config=browser_config,
+            config={'preferred': saved_device} if saved_device else {},
         )
 
-    def _assert_cloud_device(self, preferred, browser_config, expected):
+    def _assert_cloud_device(self, preferred, saved_device, expected):
         import types as _types
         from unittest.mock import patch
-        manager = self._manager(preferred, browser_config)
+        manager = self._manager(preferred, saved_device)
         task = MultiAccountDailyTask.__new__(MultiAccountDailyTask)
         executor = _types.SimpleNamespace(device_manager=manager)
         with patch.object(MultiAccountDailyTask, 'executor', new=executor):
             self.assertEqual(MultiAccountDailyTask._is_cloud_device(task), expected)
 
-    def test_cloud_device_first_entry_falls_back_to_browser_config(self):
-        """设备列表还没刷新出 browser 项时, 配置过云浏览器就显示云按钮。"""
-        self._assert_cloud_device(None, {'url': 'https://x'}, True)
+    def test_cloud_device_first_entry_uses_saved_browser_id(self):
+        """设备还没解析出来时看已保存的 preferred: browser 才算云游戏。"""
+        self._assert_cloud_device(None, 'browser', True)
+
+    def test_cloud_device_first_entry_saved_windows_hides_buttons(self):
+        """PC 用户的 preferred 是 windows: 首帧没设备也不能显示云按钮。"""
+        self._assert_cloud_device(None, 'windows', False)
+
+    def test_cloud_device_first_entry_without_saved_device(self):
+        self._assert_cloud_device(None, None, False)
 
     def test_cloud_device_preferred_browser(self):
-        self._assert_cloud_device({'device': 'browser'}, {}, True)
+        self._assert_cloud_device({'device': 'browser'}, None, True)
 
     def test_cloud_device_preferred_windows_hides_buttons(self):
-        self._assert_cloud_device({'device': 'windows'}, {'url': 'https://x'}, False)
+        self._assert_cloud_device({'device': 'windows'}, 'browser', False)
 
     def test_cloud_device_no_browser_config_no_buttons(self):
         self._assert_cloud_device(None, None, False)

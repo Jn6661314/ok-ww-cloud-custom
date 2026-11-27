@@ -169,9 +169,22 @@ def _replace_dir(source: Path, target: Path) -> None:
             return
 
     if last_error is not None and last_error.errno == errno.EXDEV:
-        # source/target on different volumes: target was moved aside, so the
-        # copy creates a complete new profile before we delete the old one.
-        shutil.copytree(source, target)
+        # 跨盘符: 上面失败时已经把旧 profile 还原回 target 了, 而 copytree 不能写进
+        # 已存在的目录(否则必然 FileExistsError)。所以先把它再挪开(同盘符重命名),
+        # 复制失败就把旧 profile 放回去, 不留写一半的目录。
+        if retired.exists():
+            shutil.rmtree(retired, ignore_errors=True)
+        if target.exists():
+            os.replace(target, retired)
+        try:
+            shutil.copytree(source, target)
+        except OSError:
+            if retired.exists() and not target.exists():
+                try:
+                    os.replace(retired, target)
+                except OSError:  # pragma: no cover - still locked
+                    pass
+            raise
         if retired.exists():
             shutil.rmtree(retired, ignore_errors=True)
         shutil.rmtree(source, ignore_errors=True)

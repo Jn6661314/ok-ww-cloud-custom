@@ -16,9 +16,10 @@ TRAY_LAYOUTS = ((495, 735), (375, 615, 855), (255, 495, 735, 975))
 ROWS = tuple(255 << (SIZE * r) for r in range(SIZE))
 COLS = tuple(0x0101010101010101 << c for c in range(SIZE))
 FULL = (1 << (SIZE * SIZE)) - 1
-# choose_move 束搜索安全阀: 全局中间状态上限 + 单次搜索墙钟预算(秒)。
-# 4 块托盘(无尽模式)的组合若不裁剪会指数爆炸, 这两个值保证最坏情况也在几秒内
-# 返回, 而不是把整个任务卡死在纯 CPU 计算里。
+# choose_move beam-search safety valves: a hard cap on intermediate states plus
+# a wall-clock budget per search. Four-tray batches grow combinatorially and
+# without these bounds a depth-2 search can evaluate tens of millions of boards,
+# hanging the task for minutes. The budget guarantees a bounded-time answer.
 CHOOSE_MOVE_BEAM_WIDTH = 96
 CHOOSE_MOVE_TIME_BUDGET = 3.0
 
@@ -194,11 +195,11 @@ def board_value(mask):
 def choose_move(board, excluded=()):
     """Search the current batch; bound intermediate states for any tray size.
 
-    官方只在 3 块托盘时裁剪中间状态, 而新关卡/无尽模式的托盘是 4 块:
-    走 else 分支后状态数不设上限, 深度 2 就要评估上千万次 clear_lines +
-    board_value, 单次搜索纯 CPU 跑满数分钟(2026-11-25 两次卡死现场,
-    关机线程转储定格在 board_value 生成式)。这里对任意托盘大小都裁剪,
-    并加墙钟兜底, 超时直接采用已找到的最优解, 保证永不卡死。
+    The original code only pruned when there were exactly three trays. Stages
+    with four trays fall through to the unbounded branch and explode: depth 2
+    evaluates tens of millions of clear_lines/board_value calls, hanging the
+    task for minutes. Prune for every tray size and add a wall-clock fallback
+    that returns the best move found so far, so the search can never hang.
     """
     deadline = time.monotonic() + CHOOSE_MOVE_TIME_BUDGET
     batch = {p.slot: placements(p.cells) for p in board.pieces}

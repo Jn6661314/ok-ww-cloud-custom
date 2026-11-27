@@ -7,7 +7,7 @@ import win32gui
 import win32process
 
 from ok import Box
-from ok.task.exceptions import WaitFailedException
+from ok.task.exceptions import TaskDisabledException, WaitFailedException
 from src import cloud_browser
 from src.cloud_recovery import FatalTaskError, run_with_cloud_recovery, wait_cloud_ready
 from src.task.DailyTask import DailyTask
@@ -18,7 +18,7 @@ from src.task.MouseResetTask import MouseResetTask
 from src.task.account.MultiAccountConfigStore import (
     MultiAccountConfigStore, display_account, resolve_task, validate_accounts,
 )
-from src.task.account.RuntimeTaskConfig import account_task_config
+from src.task.account.RuntimeTaskConfig import account_task_config, isolated_task_configs
 from src.task.task_icons import task_icon
 
 account_pattern = re.compile(r'\*\*\*\*')
@@ -160,8 +160,9 @@ class MultiAccountDailyTask(WWOneTimeTask, BaseCombatTask):
     def _is_cloud_device(self):
         # 设备列表首次刷新完成前 device_dict 里还没有 browser 项, is_browser()
         # 会返回 None, 导致云鸣潮下首次进入配置页看不到保存/切换账号按钮。
-        # 这里改为: 有首选设备以它为准; 还没刷出来时只要配置过云浏览器
-        # (browser_config 存在)就先按云设备显示, 刷新完成后以实际设备为准。
+        # 有首选设备以它为准; 还没刷出来时看**已保存的设备标识**。
+        # 不能用 browser_config 判断: config.py 给每个安装都写了 browser 段,
+        # PC 用户也会被当成云游戏(逐账号配置被隐藏、云按钮出现、run() 误入云分支)。
         try:
             manager = self.executor.device_manager
         except Exception:
@@ -172,7 +173,11 @@ class MultiAccountDailyTask(WWOneTimeTask, BaseCombatTask):
             preferred = None
         if preferred is not None:
             return preferred.get('device') == 'browser'
-        return bool(getattr(manager, 'browser_config', None))
+        config = getattr(manager, 'config', None) or {}
+        try:
+            return config.get('preferred') == 'browser'
+        except AttributeError:
+            return False
 
     def _mark_done(self, account):
         normalized = normalize_account_name(account)
@@ -239,7 +244,14 @@ class MultiAccountDailyTask(WWOneTimeTask, BaseCombatTask):
             key = account['account_key']
             self.info_set('当前账号', display_account(key))
             try:
-                self._run_cloud_account(account)
+                # 逐账号隔离任务配置: 账号里勾的嵌套任务(刷巢穴/4C 等)不会串到下一个账号。
+                with isolated_task_configs(self.executor.get_all_tasks()):
+                    self._run_cloud_account(account)
+            except TaskDisabledException:
+                # 用户点了停止: 记成"已取消", 不能混进失败, 也不再继续后面的账号。
+                self._record_cloud_result(store, account, 'cancelled')
+                self.info_set('状态', '已停止')
+                return
             except Exception as error:
                 self._record_cloud_result(store, account, 'failed', str(error))
                 raise
@@ -280,8 +292,12 @@ class MultiAccountDailyTask(WWOneTimeTask, BaseCombatTask):
                 self.log_info(self.tr('副本现场已续打并领奖，接着执行本账号剩余任务。'))
             else:
                 wait_cloud_ready(self, time_out=600)
-            if task is None:
+            if account is None:
+                # 一个账号都没配: 沿用旧行为, 跑当前已登录账号的日常。
                 self.run_task_by_class(DailyTask)
+            elif task is None:
+                # 该账号显式配置为「不执行任务、只登录」, 与 MultiAccountConfigTask 一致。
+                self.log_info(self.tr('账号 {account} 未配置任务，只登录不执行。').format(account=label))
             else:
                 # 按该账号自己勾选的配置执行（含刷梦魇巢穴/4C 等）。
                 with account_task_config(task, account['config']):

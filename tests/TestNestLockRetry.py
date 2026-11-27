@@ -72,7 +72,7 @@ class RetryTargetTest(unittest.TestCase):
     def test_retry_stops_on_success(self):
         check = self.make_check()
         check.target_enemy.side_effect = [False, True]
-        self.assertTrue(check._retry_target_before_give_up())
+        self.assertTrue(check._retry_target_before_give_up(has_health=True))
         self.assertEqual(check.target_enemy.call_count, 2)
         self.assertEqual(check.target_enemy.call_args.kwargs['time_out'], 5)
         self.assertFalse(check.target_lost_give_up)
@@ -80,21 +80,28 @@ class RetryTargetTest(unittest.TestCase):
 
     def test_give_up_after_all_retries_fail(self):
         check = self.make_check(retries=3)
-        self.assertFalse(check._retry_target_before_give_up())
+        self.assertFalse(check._retry_target_before_give_up(has_health=True))
         self.assertEqual(check.target_enemy.call_count, 3)
         self.assertTrue(check.target_lost_give_up)
 
+    def test_no_retry_without_health_bar(self):
+        """正常清场(敌人被击杀)没有残留血条: 不能重锁, 也不能置 target_lost_give_up。"""
+        check = self.make_check()
+        self.assertFalse(check._retry_target_before_give_up(has_health=False))
+        check.target_enemy.assert_not_called()
+        self.assertFalse(check.target_lost_give_up)
+
     def test_no_retry_when_disabled(self):
         check = self.make_check(retries=0)
-        self.assertFalse(check._retry_target_before_give_up())
+        self.assertFalse(check._retry_target_before_give_up(has_health=True))
         check.target_enemy.assert_not_called()
         self.assertFalse(check.target_lost_give_up)
 
     def test_only_one_retry_round_per_lost_target(self):
         check = self.make_check()
-        check._retry_target_before_give_up()
+        check._retry_target_before_give_up(has_health=True)
         first_count = check.target_enemy.call_count
-        check._retry_target_before_give_up()
+        check._retry_target_before_give_up(has_health=True)
         self.assertEqual(check.target_enemy.call_count, first_count)
 
     def test_no_enemy_window_uses_lock_timeout_when_retry_enabled(self):
@@ -107,10 +114,11 @@ class RetryTargetTest(unittest.TestCase):
 
 class NestSkipTest(unittest.TestCase):
 
-    def make_task(self, loot=False):
+    def make_task(self, found):
         task = nest_mod.NightmareNestTask.__new__(nest_mod.NightmareNestTask)
         task._capture_mode = False
         task.target_lost_give_up = False
+        task._unreachable_nests = set()
         task.config = {}
         task.log_info = Mock()
         task.tr = lambda text: text
@@ -121,14 +129,18 @@ class NestSkipTest(unittest.TestCase):
         task.run_until = Mock()
         task.wait_feature = Mock(return_value=SimpleNamespace(name='gray_teleport'))
         task._travel_to_nest_or_skip = Mock(return_value=True)
-        # 有掉落时: while 循环里第一次命中 -> 按 F -> 第二次不再命中;
-        # 战斗结束后给 target_lost 判断再返回一次 True, 证明"有掉落不能跳过聚落"。
-        task.find_f_with_text = Mock(side_effect=[True, False, True] if loot else [False, False])
-        task.send_key = Mock()
-        task.wait_in_team_and_world = Mock(return_value=True)
-        task.walk_find_echo = Mock(return_value=True)
+        task.find_f_with_text = Mock(return_value=False)
+        # found: 目标丢失后还能不能把声骸找回来。
+        task.walk_find_echo = Mock(return_value=found)
+        task.yolo_find_echo = Mock(return_value=(found, None))
         task.has_echo_notification = Mock(return_value=False)
         task._should_continue_combat_after_pickup = Mock(return_value=False)
+        task.ensure_main = Mock()
+        task.openF2Book = Mock()
+        task._nest_tab_of_current_nest = 'go_nest'
+        task.go_nest = Mock()
+        task.send_key = Mock()
+        task.wait_in_team_and_world = Mock(return_value=True)
 
         def _lose_target(**_kwargs):
             task.target_lost_give_up = True
@@ -137,19 +149,21 @@ class NestSkipTest(unittest.TestCase):
         task.combat_once = _lose_target
         return task
 
-    def test_target_lost_without_loot_skips_nest(self):
-        task = self.make_task(loot=False)
+    def test_target_lost_without_echo_skips_and_remembers_nest(self):
+        """目标丢失且确实没捡到声骸: 跳过聚落, 并记进 _unreachable_nests 防止原地打转。"""
+        task = self.make_task(found=False)
         task.combat_nest(nest_mod.NestTarget(box=object(), cache_key='nest-a'))
-        task.next_frame.assert_called()
-        task.esc_world_confirm.assert_not_called()
         messages = [str(call) for call in task.log_info.call_args_list]
         self.assertTrue(any('跳过当前聚落' in text for text in messages), messages)
+        self.assertIn('nest-a', task._unreachable_nests)
 
-    def test_enemy_died_with_loot_still_picks_up(self):
-        task = self.make_task(loot=True)
+    def test_target_lost_but_echo_found_keeps_nest(self):
+        """目标丢失但捡到了声骸: 照常拾取, 不跳过聚落。"""
+        task = self.make_task(found=True)
         task.combat_nest(nest_mod.NestTarget(box=object(), cache_key='nest-b'))
         messages = [str(call) for call in task.log_info.call_args_list]
         self.assertFalse(any('跳过当前聚落' in text for text in messages), messages)
+        self.assertNotIn('nest-b', task._unreachable_nests)
         self.assertFalse(task.target_lost_give_up)
 
 

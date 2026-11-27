@@ -282,6 +282,11 @@ class CombatCheck(BaseWWTask):
         retries = int(getattr(self, 'target_enemy_retry_count', 0) or 0)
         if retries <= 0 or self.is_adb():
             return False
+        if not has_health:
+            # 看不到任何血条 = 敌人已经被打死(正常清场), 不是"飞走/丢失"。这时重锁
+            # 只会白等 retries * timeout 秒, 还会把 target_lost_give_up 置真,
+            # 让任务误判目标丢失而跳过聚落、跳过找声骸。
+            return False
         if self._target_retried_this_episode:
             return False
         self._target_retried_this_episode = True
@@ -465,14 +470,19 @@ class CombatCheck(BaseWWTask):
         if not levitator:
             self.send_key_up(self.key_config.get('Wheel Key'))
             raise Exception('no levitator tool in the tab wheel!')
-        old = win32api.GetCursorPos()
+        # With the ChildSession interaction the game runs in a separate session: move()
+        # already places that session's cursor, and the host cursor must stay untouched.
+        on_host = type(self.executor.interaction).__name__ != 'ChildSessionInteraction'
+        old = win32api.GetCursorPos() if on_host else None
         self.move(levitator.x, levitator.y)
-        abs_pos = self.executor.interaction.capture.get_abs_cords(levitator.x, levitator.y)
-        win32api.SetCursorPos(abs_pos)
+        if on_host:
+            abs_pos = self.executor.interaction.capture.get_abs_cords(levitator.x, levitator.y)
+            win32api.SetCursorPos(abs_pos)
         self.sleep(0.1)
         self.send_key_up(self.key_config.get('Wheel Key'))
         self.sleep(0.2)
-        win32api.SetCursorPos(old)
+        if on_host:
+            win32api.SetCursorPos(old)
         if not self.wait_feature('edge_levitator', threshold=0.6, time_out=1):
             if self.has_char(Roccia):
                 if self.find_one('levitator_roccia', threshold=0.6):
