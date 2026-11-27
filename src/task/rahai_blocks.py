@@ -248,6 +248,33 @@ def preview_matches(frame, board, move):
     return frame is not None and _board_masks(frame) == (board.mask | move.mask, board.fixed)
 
 
+def preview_center(frame, board):
+    """拖拽预览在棋盘上占据格子的中心（返回 WIDTH x HEIGHT 逻辑坐标）。
+
+    拖拽时游戏会把方块吸附到格子并显示高亮预览，_board_masks 会把这些格子
+    算作 occupied。相对拖拽前的 board 新增的格子就是预览。返回其中心，
+    没有预览（还没拖到棋盘上）返回 None。
+
+    这是视觉闭环的关键反馈信号：不用猜触控坐标系，直接看预览落在哪，
+    就知道该把手指向哪个方向挪。
+    """
+    if frame is None:
+        return None
+    mask, _ = _board_masks(frame)
+    added = mask & ~board.mask
+    if not added:
+        return None
+    rows, cols = [], []
+    for i in range(SIZE * SIZE):
+        if added & (1 << i):
+            r, c = divmod(i, SIZE)
+            rows.append(r)
+            cols.append(c)
+    # 用包围盒中心，与 Move.drop 的定义一致（L 形用格子均值会有半格假偏差）。
+    return (BOARD_X + (min(cols) + max(cols) + 1) / 2 * CELL,
+            BOARD_Y + (min(rows) + max(rows) + 1) / 2 * CELL)
+
+
 def score_bar_full(frame):
     """The far end stays magenta even under the darkened rewards overlay."""
     if frame is None:

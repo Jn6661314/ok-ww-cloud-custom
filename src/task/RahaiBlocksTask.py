@@ -4,7 +4,10 @@ from ok import BaseTask
 from ok.device.interaction_methods.browser import BrowserInteraction
 from ok.device.interaction_methods.pynput import PynputInteraction
 
-from src.task.rahai_blocks import HEIGHT, WIDTH, canonical_frame, choose_move, clear_lines, preview_matches, read_board
+from src.task.rahai_blocks import (
+    HEIGHT, WIDTH, canonical_frame, choose_move, clear_lines,
+    preview_center, preview_matches, read_board,
+)
 from src.task.task_icons import task_icon
 
 
@@ -511,6 +514,76 @@ class RahaiBlocksTask(BaseTask):
 
         return self._playable_board()
 
+    def _visual_servo(self, interaction, board, move, point, target, max_steps=10):
+        """用落点预览闭环把方块挪到目标格（MuMu/安卓触控坐标不可靠时）。
+
+        不猜触控坐标系（竖屏/横屏/缩放/镜像都可能），而是用游戏自己显示的
+        落点预览做反馈：读预览中心 -> 与目标格比较 -> 实测「手指像素增量 ->
+        预览逻辑位移」的比例 -> 反推手指该挪多少 -> 重复到命中。
+
+        point(xy) 把逻辑坐标换算成 interaction 的像素坐标；move 接受像素坐标。
+        返回 True 表示预览命中目标（可以松手落子）。
+        """
+        P = 40  # 标定时手指试探移动的像素量
+        fx, fy = point(target)
+        # 手指标点 -> 预览逻辑位移 的 2x2 雅可比：
+        #   (预览dx, 预览dy) = [[a, c], [b, d]] · (手指dx, 手指dy)
+        # 实测得到，故不依赖任何坐标系假设（缩放/镜像/轴交换都能覆盖）。
+        jac = None
+        for _ in range(max_steps):
+            interaction.move(fx, fy)
+            self.sleep(.12)
+            frame = canonical_frame(self.next_frame())
+            if not self._clickable(interaction):
+                raise RuntimeError("Game lost foreground focus during a drag")
+            if preview_matches(frame, board, move):
+                return True
+            center = preview_center(frame, board)
+            if center is None:
+                # 刚离开托盘时预览还没出现，稍等再读一次。
+                self.sleep(.15)
+                frame = canonical_frame(self.next_frame())
+                if preview_matches(frame, board, move):
+                    return True
+                center = preview_center(frame, board)
+                if center is None:
+                    return False
+
+            if jac is None:
+                # 还没标定：用两条正交探针实测雅可比（像素偏移，不经过 point）。
+                interaction.move(fx + P, fy)
+                self.sleep(.12)
+                cx = preview_center(canonical_frame(self.next_frame()), board)
+                interaction.move(fx, fy + P)
+                self.sleep(.12)
+                cy = preview_center(canonical_frame(self.next_frame()), board)
+                if cx is not None and cy is not None:
+                    jac = ((cx[0] - center[0]) / P, (cx[1] - center[1]) / P,
+                           (cy[0] - center[0]) / P, (cy[1] - center[1]) / P)
+                continue  # 探针把手指挪走了，下一轮 move(fx,fy) 回原位再修正
+
+            a, b, c, d = jac
+            ex = target[0] - center[0]
+            ey = target[1] - center[1]
+            det = a * d - b * c
+            if abs(det) < 1e-6:
+                # 标定退化（预览没跟手），退回单轴比例，仍读不到就放弃。
+                dfx = ex / a if abs(a) > 1e-6 else 0
+                dfy = ey / d if abs(d) > 1e-6 else 0
+            else:
+                dfx = (d * ex - c * ey) / det
+                dfy = (-b * ex + a * ey) / det
+            # 单步限幅，避免坐标系异常时一次挪太远丢失预览。
+            step = max(abs(dfx), abs(dfy))
+            if step > 300:
+                dfx, dfy = dfx * 300 / step, dfy * 300 / step
+            if abs(dfx) < 1 and abs(dfy) < 1:
+                # 偏差小于一个像素还判不中：形状/旋转的问题，挪动无用。
+                return False
+            fx += round(dfx)
+            fy += round(dfy)
+        return False
+
     def _place(self, interaction, board, move):
         piece = next(p for p in board.pieces if p.slot == move.slot)
         height, width = self.frame.shape[:2]
@@ -549,16 +622,31 @@ class RahaiBlocksTask(BaseTask):
 
             for _ in range(move.turns):
                 rotate()
-            # Retry a full rotation cycle if a key press was missed.
-            for attempt in range(4):
-                if attempt:
-                    rotate()
-                for ox, oy in ((0, 0), (0, -12), (-12, 0), (12, 0), (0, 12)):
-                    move_cursor((dx + ox, dy + oy))
-                    self.sleep(.16)
-                    if self._clickable(interaction) and preview_matches(canonical_frame(self.next_frame()), board, move):
-                        release_at_target = True
-                        return True
+            if self.is_adb():
+                # MuMu/安卓触控坐标系不可靠（横竖屏/缩放/镜像都可能），
+                # 用游戏落点预览做视觉闭环，实测偏差并修正手指，不再猜坐标。
+                if self._visual_servo(interaction, board, move, point, (dx, dy)):
+                    release_at_target = True
+                    return True
+                # 伺服失败可能是漏旋转（形状不对，挪位置永远不命中）：
+                # 补一整圈旋转 90° 再伺服一次，覆盖键位映射偶发丢键。
+                if move.turns:
+                    for _ in range(4):
+                        rotate()
+                        if self._visual_servo(interaction, board, move, point, (dx, dy)):
+                            release_at_target = True
+                            return True
+            else:
+                # Retry a full rotation cycle if a key press was missed.
+                for attempt in range(4):
+                    if attempt:
+                        rotate()
+                    for ox, oy in ((0, 0), (0, -12), (-12, 0), (12, 0), (0, 12)):
+                        move_cursor((dx + ox, dy + oy))
+                        self.sleep(.16)
+                        if self._clickable(interaction) and preview_matches(canonical_frame(self.next_frame()), board, move):
+                            release_at_target = True
+                            return True
             if not release_at_target:
                 self.log_warning(f"Placement preview did not match: slot={move.slot}, turns={move.turns}, "
                                  f"row={move.row}, col={move.col}")
