@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.20', 'v1.8.20 · 内置投屏引擎（不再需要 NectarLink 桌面端）/ Built-in mirroring engine, no NectarLink desktop app', 'HEAD'),
     ('v1.8.19', 'v1.8.19 · 手机投屏(NectarLink)驱动真机玩鸣潮（取代 MuMu）/ Drive a real phone via NectarLink mirroring', 'HEAD'),
     ('v1.8.18', 'v1.8.18 · 修复 MuMu 战斗切人永远只切 1 号位（编队识别抖动）/ Fix MuMu switching stuck on slot 1', 'HEAD'),
     ('v1.8.17', 'v1.8.17 · 修复开了远控窗口模式但设备下拉还是 PC 客户端 / Fix stream-window device dropdown', 'HEAD'),

@@ -10,6 +10,7 @@ import numpy as np
 
 from ok.device.capture import HwndWindow, BrowserCaptureMethod, update_capture_method, NemuIpcCaptureMethod, \
     ADBCaptureMethod
+from ok.device.capture_methods.base import BaseWindowsCaptureMethod
 from ok.device.interaction import PostMessageInteraction, GenshinInteraction, ForegroundPostMessageInteraction, \
     PynputInteraction, PyDirectInteraction, BrowserInteraction, ADBInteraction
 from ok.core.events import communicate
@@ -22,6 +23,25 @@ from ok.util.process import kill_exe
 from ok.util.window import windows_graphics_available, find_hwnd
 
 logger = Logger.get_logger(__name__)
+
+# 手机投屏抓屏适配层(裁工具条/黑边 + 归一化分辨率 + 坐标换算)。
+# 这个模块是我们新增的文件, 旧版本 ok-ww 里没有, 导入失败时退化成普通抓屏。
+try:
+    from ok.device.capture_methods.phone_mirror import PhoneMirrorCaptureMethod
+except Exception:  # pragma: no cover - 只在旧版本目录里才会发生
+    PhoneMirrorCaptureMethod = None
+
+# 手机投屏(内置引擎): 画面来自投屏内核的本机 socket, 点击直接变成手机触点。
+# 这两个模块是我们新增的, 旧版本 ok-ww 里没有, 导入失败时退化成普通投屏窗口。
+try:
+    from ok.device.capture_methods.phone_mirror_socket import PhoneMirrorSocketCaptureMethod
+except Exception:  # pragma: no cover - 只在旧版本目录里才会发生
+    PhoneMirrorSocketCaptureMethod = None
+
+try:
+    from ok.device.interaction_methods.phone_mirror import PhoneMirrorInteraction
+except Exception:  # pragma: no cover - 只在旧版本目录里才会发生
+    PhoneMirrorInteraction = None
 
 # 安卓设备(真机/模拟器)启动流程里用 adb 拉起游戏的节流参数。
 # 模拟器开机后游戏不会自动运行, 需要显式发 LAUNCHER intent;
@@ -76,6 +96,12 @@ class DeviceManager:
         # 手机投屏(NectarLink): 窗口里是安卓手机画面。抓屏与输入仍走 windows 链路
         # (抓窗口 + 真实键鼠点击, 由投屏软件转到手机), 但任务侧按安卓端处理。
         self.phone_mirror_mode = False
+        # 内置投屏引擎: 不抓任何窗口, 画面由自带的投屏内核经本机 socket 推来,
+        # 点击直接变成手机上的触点(不再需要安装 NectarLink 桌面端)。
+        self.phone_mirror_engine_mode = False
+        self.phone_mirror_engine = None
+        # 已经最大化过的投屏窗口(hwnd), 避免反复抢用户窗口。
+        self._phone_mirror_maximized_hwnd = 0
         # MuMu 网桥模式 adb 自动发现的结果缓存 {模拟器名: (serial or None, 时间戳)}。
         # 没有缓存时每次设备刷新都会 arp + 逐 IP 端口探测, 把设备列表拖慢几十秒。
         self._bridge_cache = {}
@@ -227,21 +253,53 @@ class DeviceManager:
                     f'phone mirror: {self.phone_mirror_mode}')
         return True
 
+    def set_phone_mirror_engine(self, engine):
+        """切到内置投屏引擎(画面来自本机 socket, 不再抓窗口)。
+
+        Args:
+            engine: SidecarEngine 实例; None 表示关掉内置引擎。
+        """
+        self.phone_mirror_engine = engine
+        self.phone_mirror_engine_mode = engine is not None
+        if engine is not None:
+            # 投屏设备在任务侧要按安卓端处理(编队识别/切人/大世界判定)。
+            self.phone_mirror_mode = True
+            self.stream_window_mode = True
+        logger.info(f'phone mirror engine mode: {self.phone_mirror_engine_mode}')
+
     def check_stream_window_resolution(self):
         """远控/串流模式下检查窗口比例, 不匹配时告警(不阻断, 实验性)。"""
         if not self.stream_window_mode:
             return None
         if self.phone_mirror_mode:
-            # 手机投屏: 手机画面比例由设备决定(常见 20:9 竖屏或 16:9 横屏),
-            # 16:9 检查对手机没有意义, 只提示画面是否已就位。
+            # 手机投屏: 手机画面比例由设备决定(常见 20:9 横屏), 16:9 检查对手机
+            # 没有意义 —— 强行按 16:9 裁会把画面切掉。ok-ww 抓的已经是裁掉
+            # NectarLink 工具条和黑边后的手机画面, 坐标按画面区换算, 所以这里
+            # 只汇报当前画面尺寸, 不报警告。
+            getter = getattr(getattr(self, 'capture_method', None), 'picture_size', None)
+            if getattr(self, 'phone_mirror_engine_mode', False):
+                picture = getter() if callable(getter) else None
+                if picture:
+                    logger.info(f'手机投屏(内置引擎)画面区 {picture[0]}x{picture[1]}; '
+                                f'已归一化到模板原生分辨率, 点击坐标按画面区换算。')
+                return None
             window = self.hwnd_window
             if window is None:
                 return None
             width = getattr(window, 'width', 0) or getattr(window, 'client_width', 0)
             height = getattr(window, 'height', 0) or getattr(window, 'client_height', 0)
-            if width > 0 and height > 0:
-                logger.info(f'手机投屏窗口尺寸 {width}x{height}; 画面区域由投屏软件'
-                            f'(NectarLink)自行计算, 点击坐标会自动换算成手机屏幕比例。')
+            if width <= 0 or height <= 0:
+                return None
+            picture = None
+            getter = getattr(getattr(self, 'capture_method', None), 'picture_size', None)
+            if callable(getter):
+                picture = getter()
+            if picture:
+                logger.info(f'手机投屏画面区 {picture[0]}x{picture[1]} (窗口客户区 {width}x{height}); '
+                            f'已归一化到模板原生分辨率, 点击坐标按画面区换算。')
+            else:
+                logger.info(f'手机投屏窗口客户区 {width}x{height}; 画面区识别中, '
+                            f'点击坐标会自动换算成手机屏幕比例。')
             return None
         window = self.hwnd_window
         if window is None:
@@ -263,6 +321,40 @@ class DeviceManager:
         except Exception as e:
             logger.debug(f'emit stream window warning failed: {e}')
         return message
+
+    def maximize_phone_mirror_window(self):
+        """把投屏窗口最大化, 拿到最大的画面分辨率。
+
+        NectarLink 对最大化/全屏窗口不会再自动改尺寸(源码 MirrorWindow.qml 的
+        screenResizeTimer 对 Maximized/FullScreen 直接 return), 所以最大化之后
+        窗口尺寸是稳定的, ok-ww 才能把画面归一化到模板原生分辨率; 否则用户
+        随手拖一下窗口, 画面比例就变一次, 模板资源也要跟着重载一遍。
+
+        代价是投屏窗口会盖住屏幕(自动化运行时无所谓)。失败不影响继续用。
+        """
+        window = self.hwnd_window
+        if window is None:
+            return False
+        hwnd = getattr(window, 'hwnd', 0)
+        if not hwnd:
+            return False
+        if getattr(self, '_phone_mirror_maximized_hwnd', 0) == hwnd:
+            return True
+        try:
+            import win32con
+            import win32gui
+            if not win32gui.IsWindow(hwnd):
+                return False
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+            window.do_update_window_size()
+            self._phone_mirror_maximized_hwnd = hwnd
+            logger.info(f'投屏窗口已最大化: 客户区 {window.width}x{window.height}')
+            return True
+        except Exception as e:
+            logger.warning(f'投屏窗口最大化失败(不影响使用): {e}')
+            return False
 
     def refresh(self):
         logger.debug('calling refresh')
@@ -404,6 +496,19 @@ class DeviceManager:
         self.device_dict.update(pc_devices)
 
     def update_pc_device(self):
+        if getattr(self, 'phone_mirror_engine_mode', False):
+            # 内置投屏引擎没有窗口, 但框架需要一个"设备"来挂抓屏和输入。
+            imei = 'pc_phone_mirror'
+            pc_device = {"address": "", "imei": imei, "device": "windows",
+                         "model": "", "nick": "手机投屏(内置引擎)",
+                         "width": 1920, "height": 1080,
+                         "hwnd": "手机投屏", "capture": "windows",
+                         "connected": True, "full_path": "",
+                         "real_hwnd": 0, "exe": None,
+                         "phone_mirror": True,
+                         "resolution": "1920x1080"}
+            self._replace_pc_devices({imei: pc_device})
+            return imei
         if self.windows_capture_config is not None:
             if not self.windows_capture_config.get('exe') and not self.windows_capture_config.get('hwnd_class') and not self.windows_capture_config.get('title'):
                 from ok.util.window import find_all_visible_windows, get_window_bounds
@@ -844,19 +949,54 @@ class DeviceManager:
             self.hwnd_window.update_window(title, exe, frame_width, frame_height, player_id, hwnd_class, top_hwnd_class)
 
     def use_windows_capture(self):
+        if getattr(self, 'phone_mirror_engine_mode', False):
+            self._use_phone_mirror_engine_capture()
+            return
         selected_method = self.config.get('capture')
         valid_methods = self.windows_capture_config.get('capture_method', [])
         if not selected_method or selected_method not in valid_methods:
              if valid_methods:
                  selected_method = valid_methods[0]
-        self.capture_method = update_capture_method(self.windows_capture_config, self.capture_method, self.hwnd_window,
+        # 投屏模式外面裹了一层适配器, 这里先取回真正的抓屏方法: 否则框架按
+        # 类型判断("不是 WGC 就重建")会把适配器丢掉, 画面区裁剪就失效了。
+        inner = self.capture_method
+        if PhoneMirrorCaptureMethod is not None and isinstance(inner, PhoneMirrorCaptureMethod):
+            inner = inner.inner
+        self.capture_method = update_capture_method(self.windows_capture_config, inner, self.hwnd_window,
                                                     exit_event=self.exit_event, selected_method=selected_method)
         if self.capture_method is None:
             logger.error(f'cant find a usable windows capture')
         else:
+            if (self.phone_mirror_mode and PhoneMirrorCaptureMethod is not None
+                    and isinstance(self.capture_method, BaseWindowsCaptureMethod)):
+                # 投屏: 窗口客户区里混着 NectarLink 的工具条和黑边, 裹一层适配器
+                # 只保留手机画面, 并把画面归一化到模板原生分辨率(帧尺寸恒定,
+                # 窗口被拖动时框架也不用反复重载模板资源)。
+                self.capture_method = PhoneMirrorCaptureMethod(self.capture_method)
+                logger.info('投屏抓屏已启用画面适配: 裁掉工具条/黑边 + 归一化到 1080 高的模板分辨率')
             logger.info(f'capture method {type(self.capture_method)}')
             if self.interaction:
                 self.interaction.capture = self.capture_method
+
+    def _use_phone_mirror_engine_capture(self):
+        """内置投屏引擎: 画面从本机 socket 收, 不抓窗口。"""
+        engine = self.phone_mirror_engine
+        if engine is None or PhoneMirrorSocketCaptureMethod is None:
+            logger.error('手机投屏(内置引擎): 投屏内核没起来, 无法抓屏')
+            self.capture_method = None
+            return
+        if engine.port is None and not engine.wait_ready(timeout=5.0):
+            logger.error('手机投屏(内置引擎): 投屏内核还没就绪(手机上可能还没点允许)')
+            self.capture_method = None
+            return
+        old = self.capture_method
+        if isinstance(old, PhoneMirrorSocketCaptureMethod):
+            old.close()
+        self.capture_method = PhoneMirrorSocketCaptureMethod(engine.port, exit_event=self.exit_event)
+        self.capture_method.start()
+        logger.info(f'手机投屏(内置引擎): 已连接投屏内核, 画面端口 {engine.port}')
+        if self.interaction:
+            self.interaction.capture = self.capture_method
 
     def start(self):
         self.handler.post(self.do_start, remove_existing=True, skip_if_running=True)
@@ -879,12 +1019,20 @@ class DeviceManager:
 
             if self.stream_window_mode:
                 if self.phone_mirror_mode:
-                    # 手机投屏: 窗口客户区就是手机画面(NectarLink 会按手机比例
-                    # 调整窗口大小), 不做 16:9 参考尺寸裁剪 —— 手机画面比例由用户
-                    # 决定, 强行按 16:9 裁会把画面切掉。
-                    self.ensure_hwnd(title, exe,
-                                     hwnd_class=self.windows_capture_config.get('hwnd_class'),
-                                     top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
+                    if getattr(self, 'phone_mirror_engine_mode', False):
+                        # 内置投屏引擎: 画面来自本机 socket, 根本没有窗口, 也不做
+                        # 16:9 裁剪 —— 手机画面比例由手机决定。
+                        pass
+                    else:
+                        # 手机投屏: 窗口客户区里是手机画面(可能带 NectarLink 工具条
+                        # 和黑边), 不做 16:9 参考尺寸裁剪 —— 手机画面比例由手机决定,
+                        # 强行按 16:9 裁会把画面切掉。抓屏时由投屏适配层裁到画面区。
+                        self.ensure_hwnd(title, exe,
+                                         hwnd_class=self.windows_capture_config.get('hwnd_class'),
+                                         top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
+                        # 最大化后 NectarLink 不再自动改窗口尺寸, 画面尺寸稳定,
+                        # 归一化后的帧尺寸也就恒定(模板不用反复重载)。
+                        self.maximize_phone_mirror_window()
                 else:
                     # 远控窗口一般带标题栏(甚至可能有黑边), 传一个 16:9 参考尺寸后
                     # find_hwnd 会先在窗口内部找 16:9 的画面区域, HwndWindow 也会按
@@ -898,7 +1046,13 @@ class DeviceManager:
                                  hwnd_class=self.windows_capture_config.get('hwnd_class'),
                                  top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
             self.use_windows_capture()
-            if not isinstance(self.interaction, self.win_interaction_class):
+            if getattr(self, 'phone_mirror_engine_mode', False) and PhoneMirrorInteraction is not None:
+                # 内置引擎: 点击直接发给手机, 不用真实鼠标, 也不需要窗口在前台。
+                if not isinstance(self.interaction, PhoneMirrorInteraction):
+                    self.interaction = PhoneMirrorInteraction(self.capture_method)
+                else:
+                    self.interaction.capture = self.capture_method
+            elif not isinstance(self.interaction, self.win_interaction_class):
                 self.interaction = self.win_interaction_class(self.capture_method, self.hwnd_window)
             elif self.interaction:
                 self.interaction.capture = self.capture_method

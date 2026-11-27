@@ -7,6 +7,12 @@
 
 ---
 
+## 2026-11-27
+
+| 版本 | 一句话摘要 |
+| --- | --- |
+| [v1.8.20](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.20) | **内置投屏引擎，把 NectarLink 桌面端装进 ok-ww**：新增内置投屏内核 `bin/nectarlink-sidecar.exe`（Rust，基于 nectarlink-core 的 MPL-2.0 无界面内核：自己跟手机配对、拉流，用 Windows 自带 Media Foundation 解 H.264，经本机 socket 把 NV12 画面推给 ok-ww），**不用再装 NectarLink 桌面端**；ok-ww 侧新增 socket 抓屏（裁黑边 + 归一化到模板原生 1080）与触点输入（点击/滑动/按键直接变成手机触点，不再走真实鼠标，窗口不用在前台）；新增全局配置「手机投屏(内置引擎)」与扫码配对窗口（二维码用 OpenCV 自带编码器，无额外依赖）；投屏模式 16:9 分辨率契约彻底放宽，不再报 resolution error、不再弹错误框；内核端口写 link.json 可跨次运行复用，少重启就少在手机上点「允许」。新增 5 项测试，全量 407 项通过 |
+
 ## 2026-11-26
 
 | 版本 | 一句话摘要 |

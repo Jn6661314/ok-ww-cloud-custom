@@ -58,6 +58,21 @@ RELATIVE_FILES = [
     'src/globals.py',
     # 手机投屏(NectarLink)：用真机投屏代替 MuMu 模拟器（下载入口 + 窗口识别）
     'src/phone_mirror.py',
+    # 手机投屏抓屏适配层：裁掉 NectarLink 工具条/黑边 + 归一化分辨率 + 坐标换算
+    'ok/device/capture_methods/phone_mirror.py',
+    # 手机投屏(内置引擎)：自带投屏内核，不用再装 NectarLink 桌面端
+    # - phone_mirror_engine：投屏内核的进程管理（拉起/复用/状态）
+    # - phone_mirror_pairing：配对二维码与配对窗口
+    # - phone_mirror_socket：从本机 socket 收画面 + 回传触控
+    # - interaction_methods/phone_mirror：点击/滑动/按键变成手机触点
+    'src/phone_mirror_engine.py',
+    'src/phone_mirror_pairing.py',
+    'ok/device/capture_methods/phone_mirror_socket.py',
+    'ok/device/interaction_methods/phone_mirror.py',
+    # 内置投屏内核(无界面): 自己跟手机配对、拉流并用 Windows 自带解码器解码,
+    # 画面经本机 socket 推给 ok-ww。源码在 nectarlink 仓库的 core/nectarlink-sidecar
+    # (MPL-2.0, 用 cargo build -p nectarlink-sidecar --release 构建), 这里放成品。
+    'bin/nectarlink-sidecar.exe',
     # 多账号：云游戏分支 + 「保存登录状态/切换账号」按钮（仅云设备显示）
     'src/task/MultiAccountDailyTask.py',
     'src/task/account/MultiAccountConfigStore.py',

@@ -1438,6 +1438,31 @@ class BaseWWTask(BaseTask):
             self.log_warning(f'编队配置需要 2-3 个角色, 实际 {len(names)} 个, 忽略手填编队')
         return None
 
+    def find_best_match_in_box_with_frame(self, box, to_find, threshold, frame,
+                                          use_gray_scale=False, canny_lower=0, canny_higher=0):
+        """在**指定画面**上找置信度最高的特征。
+
+        框架的 ``find_best_match_in_box`` 没有 frame 参数, 只能在主帧上匹配;
+        而安卓编队识别要匹配的是缩小后的队伍栏画布, 传给 find_best_match_in_box
+        会直接抛 TypeError(``unexpected keyword argument 'frame'``), 编队识别
+        整个失效并回退到上游路径。这里自己实现一份: 逐个特征用
+        ``find_one(..., frame=frame)`` 匹配, 取置信度最高的那个。
+
+        画布尺寸必须与主帧一致(android_team_bar_snapshot 用 zeros_like 保证),
+        否则 FeatureSet.check_size 会清空特征缓存并重载全部模板。
+        """
+        max_conf = 0
+        max_box = None
+        for feature_name in to_find:
+            feature = self.find_one(feature_name, box=box, threshold=threshold,
+                                    use_gray_scale=use_gray_scale,
+                                    canny_lower=canny_lower, canny_higher=canny_higher,
+                                    frame=frame)
+            if feature and feature.confidence > max_conf:
+                max_conf = feature.confidence
+                max_box = feature
+        return max_box
+
     def android_team_bar_snapshot(self):
         """把手游右上角队伍栏缩放到 PC 头像尺度(不做逐帧模板匹配的预处理)。
 
@@ -1488,8 +1513,8 @@ class BaseWWTask(BaseTask):
         from src.char.CharFactory import char_names
         found = []
         for box in boxes:
-            matched = self.find_best_match_in_box(box, char_names, ANDROID_DETECT_THRESHOLD,
-                                                  frame=canvas)
+            matched = self.find_best_match_in_box_with_frame(box, char_names,
+                                                              ANDROID_DETECT_THRESHOLD, canvas)
             found.append(matched.name if matched else None)
         self.log_debug(f'android team bar detect: {found}')
         if not any(found):
