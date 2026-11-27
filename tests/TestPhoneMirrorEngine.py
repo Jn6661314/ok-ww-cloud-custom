@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import unittest
+import unittest.mock
 
 import cv2
 import numpy as np
@@ -24,6 +25,7 @@ sys.path.insert(0, WORK)
 
 from ok.device.capture_methods.phone_mirror_socket import (  # noqa: E402
     KIND_FRAME, KIND_TOUCH, TOUCH_DOWN, TOUCH_UP, PhoneMirrorSocketCaptureMethod)
+from ok.device.capture_methods import phone_mirror_socket  # noqa: E402
 from ok.device.interaction_methods.phone_mirror import PhoneMirrorInteraction  # noqa: E402
 from src import phone_mirror_engine, phone_mirror_pairing  # noqa: E402
 
@@ -170,6 +172,37 @@ class TestPhoneMirrorSocketCapture(unittest.TestCase):
         self.assertIsNotNone(self._wait_for_frame())
         self.assertEqual(self.capture.screen_size(), (400, 180))
         self.assertEqual(self.capture.picture_size(), (320, 180))
+
+    def test_start_returns_only_after_the_socket_is_up(self):
+        # 这是 v1.8.25 修的 bug: start() 以前只是把线程拉起来就返回, 框架紧接着问
+        # connected() 拿到 False, 于是把内置引擎(没有窗口也没有 exe)当成"未连接的
+        # windows 设备", 跑去启动游戏, 报"游戏路径不存在"。
+        capture = PhoneMirrorSocketCaptureMethod(self.sidecar.port)
+        self.addCleanup(capture.close)
+        self.assertTrue(capture.start())
+        self.assertTrue(capture.connected(), 'start() 返回时应该已经连上了')
+
+    def test_start_reports_failure_when_nothing_listens(self):
+        # 连不上就老实说没连上, 别谎报 connected —— 否则界面会一直等到超时。
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(('127.0.0.1', 0))
+        dead_port = probe.getsockname()[1]
+        probe.close()
+        capture = PhoneMirrorSocketCaptureMethod(dead_port)
+        self.addCleanup(capture.close)
+        with unittest.mock.patch.object(phone_mirror_socket, 'FIRST_CONNECT_TIMEOUT', 0.3):
+            self.assertFalse(capture.start())
+        self.assertFalse(capture.connected())
+
+    def test_a_brief_drop_still_counts_as_connected(self):
+        # 内核换模式/手机短暂掉线时 socket 会断一下, 后台线程一秒内重连。框架在这
+        # 个间隙里问 connected() 不能得到 False, 否则又把设备判成"未连接"。
+        self.assertTrue(self.capture.connected())
+        self.capture._socket.close()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and self.capture._socket is not None:
+            time.sleep(0.02)
+        self.assertTrue(self.capture.connected(), '刚断开的一瞬间不该判成未连接')
 
 
 class TestPhoneMirrorPairing(unittest.TestCase):

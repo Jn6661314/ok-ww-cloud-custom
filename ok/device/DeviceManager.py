@@ -1000,9 +1000,19 @@ class DeviceManager:
                 return
         old = self.capture_method
         if isinstance(old, PhoneMirrorSocketCaptureMethod):
+            if old.port == engine.port and old.connected():
+                # 已经连着同一个端口, 别每次启动流程都把 socket 重建一遍:
+                # 重建的那几十毫秒里 connected() 是 False, 框架会顺手把设备
+                # 判成"未连接"。
+                logger.info(f'手机投屏: 复用已连上的画面通道, 端口 {engine.port}')
+                if self.interaction:
+                    self.interaction.capture = self.capture_method
+                return
             old.close()
         self.capture_method = PhoneMirrorSocketCaptureMethod(engine.port, exit_event=self.exit_event)
-        self.capture_method.start()
+        if not self.capture_method.start():
+            # start() 已经等过首次连接; 到这儿还没连上, 说明回环端口不对或者内核刚退。
+            logger.error(f'手机投屏: 连不上投屏内核的画面端口 {engine.port}')
         logger.info(f'手机投屏: 已连接投屏内核, 画面端口 {engine.port}')
         if self.interaction:
             self.interaction.capture = self.capture_method
@@ -1065,7 +1075,18 @@ class DeviceManager:
                 self.interaction = self.win_interaction_class(self.capture_method, self.hwnd_window)
             elif self.interaction:
                 self.interaction.capture = self.capture_method
-            preferred['connected'] = self.capture_method is not None and self.capture_method.connected()
+            if getattr(self, 'phone_mirror_engine_mode', False):
+                # 内置引擎是个**伪设备**: 没有窗口、没有 exe, 也没有"外部设备"可以
+                # 断线。它能不能用由 capture 层回答(内核没起来时 check_device_error
+                # 会报), 所以这里恒为 True。
+                #
+                # 千万别写成 `capture_method.connected()`: 那是 socket 某一瞬间的
+                # 状态, 落在线程重连的间隙里就把设备改成"未连接", 而启动流程对
+                # "未连接的 windows 设备"只有两条路 —— 要求以管理员重启, 或者
+                # 去启动游戏 exe(内置引擎没有 exe, 于是报"游戏路径不存在")。
+                preferred['connected'] = True
+            else:
+                preferred['connected'] = self.capture_method is not None and self.capture_method.connected()
             self.check_stream_window_resolution()
         elif preferred['device'] == 'browser':
             if not isinstance(self.capture_method, BrowserCaptureMethod):

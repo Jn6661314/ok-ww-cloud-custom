@@ -49,6 +49,16 @@ KEY_RECENTS = 2
 KEY_ENTER = 3
 KEY_BACKSPACE = 4
 
+# start() 等首次连上 sidecar 的时间。连的是本机回环, 正常几十毫秒就建好。
+FIRST_CONNECT_TIMEOUT = 3.0
+
+# socket 断掉之后, 这段时间内仍然算"已连接"。
+#
+# 内核重启(换配对模式)或者手机短暂掉线时 socket 会断一下, 后台线程每秒重连。
+# 框架在启动流程里会问 connected(), 落在这一秒里就会把设备判成"未连接",
+# 然后跑去启动游戏 exe —— 内置引擎没有 exe, 用户看到的是"游戏路径不存在"。
+RECONNECT_GRACE = 8.0
+
 # 键名 -> sidecar 的键码。ok-ww 的按键名来自 ADB 键位表, 这里只挑手机能懂的。
 KEY_CODES = {
     'back': KEY_BACK,
@@ -96,22 +106,47 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         self.last_error = None
         self._thread = None
         self._running = False
+        # 最近一次连上 sidecar 的时刻(monotonic)。断开重连的间隙里靠它维持
+        # "已连接"的判断, 免得框架把设备当成未连接。
+        self._last_connected = 0.0
 
     # ------------------------------------------------------------------
     # 连接与收帧
     # ------------------------------------------------------------------
 
     def start(self):
-        """开始收帧(后台线程)。"""
+        """开始收帧(后台线程), 并等首次连上。
+
+        Returns:
+            是否已经连上 sidecar。
+
+        必须**等连上再返回**: 框架紧接着会问 connected(), 拿它判断"这个设备能不能
+        启动"。如果这里只是把线程拉起来就返回, 那个瞬间还没连上, connected() 就是
+        False —— 框架会把内置引擎(它没有窗口、没有 exe)当成"未连接的 windows
+        设备", 跑去启动游戏 exe, 最后报"游戏路径不存在, 请手动打开游戏"。
+        """
         if self._running:
-            return True
+            return self.connected()
         self._running = True
         self._thread = threading.Thread(target=self._receive_loop, name='phone-mirror-recv', daemon=True)
         self._thread.start()
-        return True
+        deadline = time.monotonic() + FIRST_CONNECT_TIMEOUT
+        while time.monotonic() < deadline:
+            if self._socket is not None:
+                return True
+            if not self._running:
+                break
+            time.sleep(0.02)
+        return self._socket is not None
 
     def connected(self):
-        return self._running and self._socket is not None
+        if not self._running:
+            return False
+        if self._socket is not None:
+            return True
+        # 刚断的: 后台线程正在重连, 别让调用方以为设备没了。
+        return (self._last_connected > 0
+                and time.monotonic() - self._last_connected < RECONNECT_GRACE)
 
     def clickable(self):
         return self.connected()
@@ -156,6 +191,7 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         sock = socket.create_connection(('127.0.0.1', self.port), timeout=5)
         sock.settimeout(5.0)
         self._socket = sock
+        self._last_connected = time.monotonic()
         logger.info(f'手机投屏: 已连接 sidecar 127.0.0.1:{self.port}')
         try:
             while not self._stopped():
