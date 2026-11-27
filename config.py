@@ -5,10 +5,16 @@ from pathlib import Path
 from ok import Box, ConfigOption, Icon
 from ok.util.GlobalConfig import create_basic_options
 from src.game_launcher import get_game_launch_arguments
+from src.phone_mirror import ANDROID_MIRROR_APK_URL, open_android_mirror_apk
 from src.task.process_feature import process_feature
 from src.task.task_icons import task_icon
 
 version = "v3.8.15"
+
+
+def _open_phone_mirror_apk():
+    """「下载手机端」按钮的回调: 打开网盘地址。"""
+    return open_android_mirror_apk()
 
 
 def _find_most_recently_run_pc_exe():
@@ -212,13 +218,35 @@ stream_config_option = ConfigOption('远控串流窗口(试验性)', {
               '位置: 左侧导航「游戏」分组最下面(不在「设置」页里)',
    config_type={
        'Preset': {'type': 'drop_down',
-                  'options': ['Manual', 'Moonlight', 'UU远程', 'ToDesk', '向日葵', 'Parsec']},
+                  'options': ['Manual', 'Moonlight', 'UU远程', 'ToDesk', '向日葵', 'Parsec',
+                              'NectarLink 手机投屏']},
    },
    config_description={
        'Enable': '开启后设备下拉里只列出标题匹配的远控/串流窗口, 鸣潮 PC 客户端不再出现; 改完需要重启 ok-ww。要求被控电脑上游戏全屏 16:9, 远控窗口客户区也是 16:9 且画面铺满',
-       'Preset': '选软件后自动使用内置窗口标题预设, 不用手填正则。Moonlight 匹配的是串流窗口「<主机名> - Moonlight」, 不会误抓主界面; 选 Manual 时用下面的 Window Title',
+       'Preset': '选软件后自动使用内置窗口标题预设, 不用手填正则。Moonlight 匹配的是串流窗口「<主机名> - Moonlight」, 不会误抓主界面; 选「NectarLink 手机投屏」时窗口里是安卓手机画面, 编队识别与切人按安卓端处理(取代 MuMu 模拟器); 选 Manual 时用下面的 Window Title',
        'Window Title': '窗口标题关键字(正则, 忽略大小写), 例如 UU远程 或 ToDesk|SunloginClient|Parsec。与 Preset 同时填写时两者都会匹配; 都留空则不生效',
        'Force Pynput': '远控软件基本不处理窗口消息(PostMessage), 必须用真实键鼠事件, 保持开启',
+   }, show_at_tab=True, icon='monitor')
+
+# 手机投屏(NectarLink): 用真机投屏代替 MuMu 模拟器驱动鸣潮。
+# 桌面端把手机画面开成一个窗口(标题 "<设备名> · NectarLink"), 并把鼠标点击按
+# 屏幕比例转发到手机; ok-ww 抓这个窗口 + 真实键鼠点击, 就等于在操作手机。
+# 编队识别/切人按安卓端处理(见 src/phone_mirror.py 与 BaseWWTask.is_adb)。
+phone_mirror_option = ConfigOption('手机投屏(NectarLink)', {
+    '下载手机端': '',
+    '手机端下载地址': ANDROID_MIRROR_APK_URL,
+}, description='用真机投屏(NectarLink)代替模拟器驱动鸣潮: 手机画面投到 PC 窗口里, '
+              '脚本抓窗口并点击, 点击由投屏软件按比例转回手机, 坐标自动适配缩放/黑边/横竖屏。'
+              '步骤: 1) 手机装好下面的 NectarLink 客户端并与电脑配对; '
+              '2) 桌面端点开手机投屏窗口; '
+              '3) 在「远控串流窗口(试验性)」里把 Preset 选成「NectarLink 手机投屏」并开启。'
+              '注意: 配置名不要带 "/", 否则框架会当成目录。',
+   config_type={
+       '下载手机端': {'type': 'button', 'text': '下载手机端(网盘)', 'callback': _open_phone_mirror_apk},
+   },
+   config_description={
+       '下载手机端': '点击打开网盘, 下载 NectarLink 的 Android 客户端(安装到手机上并与电脑配对)',
+       '手机端下载地址': '手机端客户端的下载地址(网盘分享, 含提取码)。默认已填好, 可自行替换',
    }, show_at_tab=True, icon='monitor')
 
 config = {
@@ -248,7 +276,7 @@ config = {
         ["src.gui.CharacterCodeTab", "CharacterCodeTab"],
     ],
     'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option,
-                       android_config_option, stream_config_option],
+                       android_config_option, stream_config_option, phone_mirror_option],
     'ocr': {
         'lib': 'onnxocr',
         'auto_simplify': True,

@@ -30,6 +30,7 @@ def bare_device_manager():
     """不走 __init__（会建窗口/起线程），只装 set_stream_window 需要的属性。"""
     manager = object.__new__(DeviceManager)
     manager.stream_window_mode = False
+    manager.phone_mirror_mode = False
     manager.win_interaction_class = None
     manager.hwnd_window = None
     manager.config = {}
@@ -77,17 +78,18 @@ class SettingsTest(unittest.TestCase):
 
 class ApplyTest(unittest.TestCase):
 
-    def _global_config(self, enable, title, force_pynput=True):
+    def _global_config(self, enable, title, force_pynput=True, preset='Manual'):
         global_config = Mock()
         global_config.get_config.return_value = {
-            'Enable': enable, 'Window Title': title, 'Force Pynput': force_pynput}
+            'Enable': enable, 'Preset': preset,
+            'Window Title': title, 'Force Pynput': force_pynput}
         return global_config
 
     def test_applies_to_device_manager(self):
         manager = Mock()
         manager.set_stream_window.return_value = True
         self.assertTrue(stream_window.apply_stream_window(self._global_config(True, 'UU远程'), manager))
-        manager.set_stream_window.assert_called_once_with('UU远程', force_pynput=True)
+        manager.set_stream_window.assert_called_once_with('UU远程', force_pynput=True, phone=False)
 
     def test_disabled_does_nothing(self):
         manager = Mock()
@@ -99,7 +101,15 @@ class ApplyTest(unittest.TestCase):
         manager = Mock()
         manager.set_stream_window.return_value = True
         self.assertTrue(stream_window.apply_stream_window(self._global_config(True, '   '), manager))
-        manager.set_stream_window.assert_called_once_with(None, force_pynput=True)
+        manager.set_stream_window.assert_called_once_with(None, force_pynput=True, phone=False)
+
+    def test_nectarlink_preset_marks_phone(self):
+        # NectarLink 手机投屏: 要按安卓端处理(编队识别/切人走安卓分支)。
+        manager = Mock()
+        manager.set_stream_window.return_value = True
+        config = self._global_config(True, '', preset='NectarLink 手机投屏')
+        self.assertTrue(stream_window.apply_stream_window(config, manager))
+        self.assertTrue(manager.set_stream_window.call_args.kwargs['phone'])
 
     def test_without_device_manager(self):
         self.assertFalse(stream_window.apply_stream_window(self._global_config(True, 'UU远程'), None))

@@ -127,6 +127,26 @@ class BaseWWTask(BaseTask):
         # 安卓触屏/PC/云 语义操作统一入口(返回与打开菜单在触屏是同一个按钮)
         self.touch = TouchMode(self)
 
+    def is_adb(self):
+        """是否为安卓端设备。
+
+        除了真机/模拟器(ADB), **手机投屏**(NectarLink 把手机画面投到本机窗口)
+        也是安卓端: 画面就是手游画面, 编队识别/切人/大世界判定都该走安卓分支。
+        它的抓屏与输入走 windows 链路(抓窗口 + 真实键鼠点击), 与 ADB 无关。
+
+        框架原实现只看 device 字段('adb'/'emulator'), 这里补上手机投屏的判定。
+        """
+        device = None
+        try:
+            device = self._executor.device_manager.get_preferred_device()
+        except Exception:
+            device = None
+        if not device:
+            return None
+        if device.get('phone_mirror'):
+            return True
+        return device.get('device') == 'adb' or device.get('device') == 'emulator'
+
     def back(self, *args, after_sleep=0, **kwargs):
         """安卓触屏统一返回语义: back == 打开菜单 == 键位表的 ` 键(KEYCODE_GRAVE)。
 

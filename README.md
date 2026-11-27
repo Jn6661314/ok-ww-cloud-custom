@@ -4,7 +4,7 @@
 
 | 你的场景 | 提示词 | 安装内容 |
 | --- | --- | --- |
-| 云鸣潮 / 多账号日常 / MuMu 模拟器 / 远控窗口（UU远程、ToDesk、向日葵、Parsec）/ 单机 PC | [`AGENT_INSTALL_PROMPT.md`](AGENT_INSTALL_PROMPT.md) | 本仓库的 Python 定制补丁（装进现有 ok-ww 的 `working`/`repo`） |
+| 云鸣潮 / 多账号日常 / MuMu 模拟器 / **手机投屏(NectarLink) 真机** / 远控窗口（UU远程、ToDesk、向日葵、Parsec）/ 单机 PC | [`AGENT_INSTALL_PROMPT.md`](AGENT_INSTALL_PROMPT.md) | 本仓库的 Python 定制补丁（装进现有 ok-ww 的 `working`/`repo`） |
 | 双机：游戏机 + 控制机，采集卡取画面，KMBox Net 键鼠盒或 SendInput 输入，DXGI 远程 | [`AGENT_INSTALL_DUALPC.md`](AGENT_INSTALL_DUALPC.md) | 独立项目 [okww-dualpc](https://github.com/xueyuannnn/okww-dualpc) 的官方包（独立目录，Rust 内核 + Qt 界面） |
 
 把对应文件里 `text` 代码块中的整段内容复制给 Agent（WorkBuddy / Claude / Cursor 等），它会自动完成安装与验证；
@@ -21,6 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ### 2026-11-27
 
+- **[v1.8.19](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.19)** — **手机投屏(NectarLink)驱动真机玩鸣潮，取代 MuMu 模拟器**：NectarLink 把手机画面投成 PC 窗口，并按**屏幕比例**把鼠标点击转回手机（协议 §4「Positions are fractions of the screen」），坐标换算由投屏软件全权负责 —— 缩放/黑边/横竖屏都不再影响落点，正好绕开 MuMu 上折腾五版都没解决的触控坐标错配。本版把投屏窗口接进 ok-ww：「远控串流窗口(试验性)」Preset 新增「NectarLink 手机投屏」预设（自动匹配标题 `<设备名> · NectarLink`），设备打 `phone_mirror` 标记并在 `BaseWWTask.is_adb()` 认它，于是 v1.8.18 的编队识别首次即锁定、编队角色下拉、切人键 1/2 全部直接生效；手机投屏不做 16:9 裁剪、不弹 16:9 告警、不尝试启动本机游戏。新增「手机投屏(NectarLink)」全局配置，带**「下载手机端(网盘)」按钮**（网盘地址 `https://pan.baidu.com/s/13Y-rkKtfp7EQHd4SJwdzDA?pwd=Jn66`）。新增 22 项测试，全量 380 项通过。**需重跑 `restore.py` 并重启 ok-ww**；切人需在手机端 NectarLink 里把 1/2 绑成切人键。
 - **[v1.8.18](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.18)** — **修复 MuMu 战斗切人永远只切 1 号位**：手填编队为空→走画面识别，投票锁定要求连续 3 次一致，但战斗特效让每次识别都不同（日志每 0.1~0.2s 在渊武/折枝/漂泊者/奥古斯塔间乱串、213 次、锁定 0 次），导致 `load_chars` 每帧重建角色、当前下标恒被重置为 0、切人键映射全乱。改为：战斗中首次识别即锁定、整场战斗不再换锁；「MuMu 安卓 Config」新增三个「编队角色」下拉（58 个官方名点选，防写错、槽位固定），优先于旧字符串编队，坏槽位跳过不作废。新增 8 项测试，全量 357 项通过。**需重跑 `restore.py` 并重启 ok-ww**，建议填三个编队角色下拉最稳。
 - **[v1.8.17](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.17)** — **修复「开了远控窗口模式，设备下拉还是 PC 客户端」**：`Enable=true` 但 `Preset=Manual`、`Window Title=""` 时，旧逻辑发现标题为空就打一句「没填窗口标题，继续使用默认 PC 设备」直接返回，`set_stream_window()` 从未执行 —— 开关被静默忽略、GUI 无任何提示。本版改为：未填标题也启用远控模式，`set_stream_window(None)` 清空 `exe`/`title`/`hwnd_class`/`top_hwnd_class` 全部过滤，`update_pc_device()` 枚举所有可见窗口，下拉里就能选中远控窗口（仍强制 Pynput）；填了标题/Preset 时仍是精确匹配；日志改为明确提示。新增/更新测试覆盖空标题分支与全窗口枚举，远控相关 31 项、全量 349 项通过。**需重跑 `restore.py` 并重启 ok-ww**。
 - **[v1.8.16](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.16)** — **MuMu 方块改用落点预览视觉闭环，彻底不再猜触控坐标**：v1.8.12~v1.8.15 连续四版修拖拽落点（sendevent 手算 / input motionevent / IPC 触控）都没解决，因为 MuMu 的「触控坐标→屏幕落点」关系因版本/设置而异、无法靠读代码猜。换思路：拖拽时游戏会把方块吸附到目标格并显示**高亮落点预览**，直接读预览中心（`preview_center`) 与目标格比较，用两条正交探针**实测**「手指像素→预览位移」的 2x2 映射（覆盖缩放/镜像/轴交换），求逆反推手指该挪多少，迭代到命中；伺服失败且需旋转时补转一圈再试。PC/云鸣潮仍走原坐标路径。新增 7 项测试（含各向异性缩放、双轴镜像收敛），全量 347 项通过。**需重跑 `restore.py` 并重启 ok-ww**，落点由用户实机确认，反正还是用不了（悲）。

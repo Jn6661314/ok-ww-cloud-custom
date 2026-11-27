@@ -73,6 +73,9 @@ class DeviceManager:
         # 试验性: 把远控/串流软件( UU远程 / ToDesk / 向日葵 / Parsec ... )的窗口当 PC 设备。
         # 打开后 windows 设备不再按"鸣潮客户端 exe + UnrealWindow"匹配, 而是按窗口标题匹配。
         self.stream_window_mode = False
+        # 手机投屏(NectarLink): 窗口里是安卓手机画面。抓屏与输入仍走 windows 链路
+        # (抓窗口 + 真实键鼠点击, 由投屏软件转到手机), 但任务侧按安卓端处理。
+        self.phone_mirror_mode = False
         # MuMu 网桥模式 adb 自动发现的结果缓存 {模拟器名: (serial or None, 时间戳)}。
         # 没有缓存时每次设备刷新都会 arp + 逐 IP 端口探测, 把设备列表拖慢几十秒。
         self._bridge_cache = {}
@@ -175,7 +178,7 @@ class DeviceManager:
     #   1. 远控软件不处理窗口消息(PostMessage 打到它窗口上不会转发), 必须用 Pynput;
     #   2. 窗口客户区必须是 16:9 且画面铺满, 否则坐标换算和识图会整体偏移。
     # ------------------------------------------------------------------
-    def set_stream_window(self, title, force_pynput=True):
+    def set_stream_window(self, title, force_pynput=True, phone=False):
         """把窗口标题匹配 ``title`` 的远控/串流窗口当作 windows 设备。
 
         Args:
@@ -183,6 +186,9 @@ class DeviceManager:
                    传 None / 空串时进入"列出所有窗口"模式: 清掉所有过滤, 让设备下拉里
                    出现所有可见窗口(含远控窗口), 由用户手动选——不再静默退回默认 PC 客户端。
             force_pynput: 强制用 PynputInteraction(真实键鼠事件), 远控软件基本都要求这样。
+            phone: True 表示窗口里是**安卓手机**画面(NectarLink 手机投屏)。抓屏与输入
+                   仍走 windows 链路(抓窗口 + 真实键鼠点击, 由投屏软件转到手机), 但设备
+                   会打上 ``phone_mirror`` 标记, 让任务侧按安卓端处理(编队识别/切人等)。
 
         Returns:
             bool: 是否成功切换。
@@ -198,6 +204,8 @@ class DeviceManager:
                 pattern = None
 
         self.stream_window_mode = True
+        # 手机投屏: 窗口里是安卓手机画面, 任务侧要按安卓端处理。
+        self.phone_mirror_mode = bool(phone)
         # 清掉鸣潮客户端的 exe / 窗口类限制, 改成只按标题匹配远控窗口;
         # top_hwnd_class 原本用于 PC 登录器, 对远控窗口没有意义。
         # 没填标题时 pattern=None, update_pc_device 会枚举所有可见窗口供用户在下拉里选。
@@ -215,12 +223,25 @@ class DeviceManager:
             # HwndWindow 在 __init__ 里已经按 PC 客户端参数建好了, 这里重新指向远控窗口。
             # 无标题模式传 None, 待用户在设备下拉里选定窗口后再由框架填具体窗口。
             self.hwnd_window.update_window(pattern, None, 0, 0, -1, None, None)
-        logger.info(f'stream window mode enabled, title pattern: {getattr(pattern, "pattern", None)}')
+        logger.info(f'stream window mode enabled, title pattern: {getattr(pattern, "pattern", None)}, '
+                    f'phone mirror: {self.phone_mirror_mode}')
         return True
 
     def check_stream_window_resolution(self):
         """远控/串流模式下检查窗口比例, 不匹配时告警(不阻断, 实验性)。"""
         if not self.stream_window_mode:
+            return None
+        if self.phone_mirror_mode:
+            # 手机投屏: 手机画面比例由设备决定(常见 20:9 竖屏或 16:9 横屏),
+            # 16:9 检查对手机没有意义, 只提示画面是否已就位。
+            window = self.hwnd_window
+            if window is None:
+                return None
+            width = getattr(window, 'width', 0) or getattr(window, 'client_width', 0)
+            height = getattr(window, 'height', 0) or getattr(window, 'client_height', 0)
+            if width > 0 and height > 0:
+                logger.info(f'手机投屏窗口尺寸 {width}x{height}; 画面区域由投屏软件'
+                            f'(NectarLink)自行计算, 点击坐标会自动换算成手机屏幕比例。')
             return None
         window = self.hwnd_window
         if window is None:
@@ -400,6 +421,8 @@ class DeviceManager:
                             "real_hwnd": hwnd, "exe": exe_name,
                             "resolution": f"{width}x{height}"
                         }
+                        if self.phone_mirror_mode:
+                            pc_device["phone_mirror"] = True
                         pc_devices[imei] = pc_device
                 self._replace_pc_devices(pc_devices)
                 return None
@@ -435,6 +458,9 @@ class DeviceManager:
                          "real_hwnd": hwnd,
                          "exe": exe_list
                          }
+            if self.phone_mirror_mode:
+                # 手机投屏: 窗口里是安卓手机画面, 任务侧按安卓端处理(编队识别/切人等)。
+                pc_device["phone_mirror"] = True
             logger.info(f'update_pc_device pc_device: {pc_device}')
             if full_path and full_path != self.config.get('pc_full_path'):
                 logger.info(f'start update_pc_device pc_full_path {full_path}')
@@ -852,13 +878,21 @@ class DeviceManager:
                 exe = preferred.get('exe')
 
             if self.stream_window_mode:
-                # 远控窗口一般带标题栏(甚至可能有黑边), 传一个 16:9 参考尺寸后
-                # find_hwnd 会先在窗口内部找 16:9 的画面区域, HwndWindow 也会按
-                # 比例裁掉多出来的高度, 这样抓屏内容和坐标换算才能对上。
-                ref_width = preferred.get('width') or 1920
-                self.ensure_hwnd(title, exe, ref_width, max(1, int(ref_width * 9 / 16)),
-                                 hwnd_class=self.windows_capture_config.get('hwnd_class'),
-                                 top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
+                if self.phone_mirror_mode:
+                    # 手机投屏: 窗口客户区就是手机画面(NectarLink 会按手机比例
+                    # 调整窗口大小), 不做 16:9 参考尺寸裁剪 —— 手机画面比例由用户
+                    # 决定, 强行按 16:9 裁会把画面切掉。
+                    self.ensure_hwnd(title, exe,
+                                     hwnd_class=self.windows_capture_config.get('hwnd_class'),
+                                     top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
+                else:
+                    # 远控窗口一般带标题栏(甚至可能有黑边), 传一个 16:9 参考尺寸后
+                    # find_hwnd 会先在窗口内部找 16:9 的画面区域, HwndWindow 也会按
+                    # 比例裁掉多出来的高度, 这样抓屏内容和坐标换算才能对上。
+                    ref_width = preferred.get('width') or 1920
+                    self.ensure_hwnd(title, exe, ref_width, max(1, int(ref_width * 9 / 16)),
+                                     hwnd_class=self.windows_capture_config.get('hwnd_class'),
+                                     top_hwnd_class=self.windows_capture_config.get('top_hwnd_class'))
             else:
                 self.ensure_hwnd(title, exe,
                                  hwnd_class=self.windows_capture_config.get('hwnd_class'),
@@ -1021,6 +1055,12 @@ class DeviceManager:
                 logger.error(f'device_connected error occurred, {e}')
 
     def get_exe_path(self, device):
+        if self.phone_mirror_mode and device.get('device') == 'windows':
+            # 手机投屏: 鸣潮跑在手机上, 本机没有可启动的 exe。
+            # 投屏窗口没开时只会提示"游戏路径不存在", 这里说明真实原因。
+            logger.info('手机投屏模式: 游戏在手机上运行, 本机不启动游戏; '
+                        '请确认 NectarLink 的手机投屏窗口已打开。')
+            return None
         path = device.get('full_path')
         if device.get(
                 'device') == 'windows' and self.windows_capture_config:

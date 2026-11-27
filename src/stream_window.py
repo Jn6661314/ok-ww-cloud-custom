@@ -24,6 +24,8 @@ UU远程 / ToDesk / 向日葵 / Parsec / Moonlight 这类软件, 本质是把被
 
 from ok import Logger
 
+from src.phone_mirror import NECTARLINK_WINDOW_PATTERN
+
 logger = Logger.get_logger(__name__)
 
 # 与 config.py 中的 ConfigOption 名称保持一致(不要带 "/", 否则配置会落到子目录里)
@@ -40,7 +42,19 @@ TITLE_PRESETS = {
     'ToDesk': r'ToDesk',
     '向日葵': r'SunloginClient|向日葵',
     'Parsec': r'Parsec',
+    # NectarLink 的手机投屏窗口标题是「<设备名> · NectarLink」
+    # (见 desktop/app/qml/MirrorWindow.qml 的 title 属性)。
+    'NectarLink 手机投屏': NECTARLINK_WINDOW_PATTERN.pattern,
 }
+
+# 手机投屏(NectarLink)预设名。这个模式下窗口代表的是**手机**而不是被控电脑,
+# 因此设备要按安卓端处理(编队识别/切人键位/大世界判定都走安卓分支)。
+PHONE_MIRROR_PRESET = 'NectarLink 手机投屏'
+
+
+def is_phone_mirror(preset) -> bool:
+    """该预设是否为「手机投屏」(窗口里是安卓手机画面)。"""
+    return str(preset or '').strip() == PHONE_MIRROR_PRESET
 
 
 def preset_title(preset) -> str:
@@ -76,6 +90,22 @@ def stream_window_settings(global_config):
     return enabled, title, force_pynput
 
 
+def stream_window_phone_mode(global_config):
+    """当前预设是否为「手机投屏」(窗口里是安卓手机画面)。
+
+    手机投屏(NectarLink)要按安卓端处理, 才能复用安卓的编队识别/切人逻辑。
+    单独一个函数, 保持 stream_window_settings 的返回结构不变。
+    """
+    if global_config is None:
+        return False
+    try:
+        option = global_config.get_config(STREAM_CONFIG_NAME)
+        return is_phone_mirror(option.get('Preset'))
+    except Exception as e:
+        logger.debug(f'read stream window phone mode failed: {e}')
+        return False
+
+
 def apply_stream_window(global_config=None, device_manager=None):
     """把远控/串流窗口切换成当前设备; 未启用或配置不全时返回 False。"""
     settings = stream_window_settings(global_config)
@@ -91,10 +121,21 @@ def apply_stream_window(global_config=None, device_manager=None):
     if setter is None:
         logger.warning('远控/串流窗口: 当前框架版本不支持, 跳过。')
         return False
+    phone = stream_window_phone_mode(global_config)
     # 未填标题也启用: 进入"列出所有窗口"模式, 让用户在设备下拉里手动选远控窗口,
     # 而不是静默退回默认 PC 客户端(那样下拉里根本看不到远控窗口)。
-    if not setter(title or None, force_pynput=force_pynput):
+    try:
+        ok = setter(title or None, force_pynput=force_pynput, phone=phone)
+    except TypeError:
+        # 旧版 DeviceManager 没有 phone 参数(框架未升级时), 退回普通远控模式。
+        ok = setter(title or None, force_pynput=force_pynput)
+    if not ok:
         return False
+    if phone:
+        logger.info('远控/串流窗口模式已启用: NectarLink 手机投屏(安卓端)。'
+                    '画面抓自投屏窗口, 点击会由 NectarLink 转到手机屏幕; '
+                    '编队识别与切人按安卓端处理。请确认投屏窗口里是鸣潮画面。')
+        return True
     if title:
         logger.info(f'远控/串流窗口模式已启用: 标题匹配 "{title}", 输入方式 '
                     f'{"Pynput(真实键鼠)" if force_pynput else "由框架决定"}。'

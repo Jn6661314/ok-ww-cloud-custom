@@ -56,6 +56,8 @@ RELATIVE_FILES = [
     # 启动时按「远控/串流窗口」配置切换（globals 里挂载）
     'src/stream_window.py',
     'src/globals.py',
+    # 手机投屏(NectarLink)：用真机投屏代替 MuMu 模拟器（下载入口 + 窗口识别）
+    'src/phone_mirror.py',
     # 多账号：云游戏分支 + 「保存登录状态/切换账号」按钮（仅云设备显示）
     'src/task/MultiAccountDailyTask.py',
     'src/task/account/MultiAccountConfigStore.py',
