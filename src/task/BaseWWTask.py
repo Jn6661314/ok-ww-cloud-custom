@@ -1372,20 +1372,38 @@ class BaseWWTask(BaseTask):
     # ---- 安卓编队锁定 (v1.5.13) --------------------------------------------
 
     def android_configured_team(self):
-        """读取全局配置里手填的 'MuMu 编队', 返回 canonical 名元组或 None。
+        """读取全局配置里手填的编队, 返回 canonical 名元组或 None。
 
-        支持中文名/英文名(如 绯雪,漂泊者·衍射,渊武 / Hiyuki,Rover: Spectro,Yuanwu),
-        按编队槽位顺序填写, 2-3 人。填了就是唯一事实来源, 完全不做画面识别。
+        优先用「MuMu 编队角色1/2/3」三个下拉(官方名, 用户点选不会写错, 槽位顺序固定);
+        下拉全空时才回退旧的逗号分隔字符串 'MuMu 编队'(兼容老配置/自定义顺序)。
+        填了就是唯一事实来源, 完全不做画面识别。
         """
-        raw = ''
+        from src.char.CharFactory import resolve_char_alias
         try:
             cfg = getattr(self, 'android_config', None) or {}
-            raw = str(cfg.get('MuMu 编队') or '')
         except Exception:
-            raw = ''
+            cfg = {}
+
+        # 新路径: 三个槽位下拉, 选官方名 -> canonical。按顺序, 跳过空槽位。
+        slot_canonicals = []
+        for key in ('MuMu 编队角色1', 'MuMu 编队角色2', 'MuMu 编队角色3'):
+            value = str(cfg.get(key) or '').strip()
+            if not value:
+                continue
+            canonical = resolve_char_alias(self, value)
+            if canonical is None:
+                self.log_warning(f'编队下拉里的角色名无法识别: {value!r}, 忽略该槽位')
+                continue
+            slot_canonicals.append(canonical)
+        if len(slot_canonicals) in (2, 3):
+            return tuple(slot_canonicals)
+        if slot_canonicals:
+            self.log_warning(f'编队下拉只选了 {len(slot_canonicals)} 个角色, 需要 2~3 个, 回退自动识别')
+
+        # 旧路径: 逗号分隔字符串。
+        raw = str(cfg.get('MuMu 编队') or '')
         if not raw.strip():
             return None
-        from src.char.CharFactory import resolve_char_alias
         names = []
         for token in raw.replace('，', ',').replace('、', ',').split(','):
             canonical = resolve_char_alias(self, token)
@@ -1459,11 +1477,17 @@ class BaseWWTask(BaseTask):
         return self.android_vote_team_identity(tuple(found))
 
     def android_vote_team_identity(self, identity):
-        """对一次识别结果投票; 连续一致达到阈值时锁定编队。
+        """对一次识别结果投票; 战斗中首次有效识别即锁定, 非战斗才要求连续一致。
 
-        - 已锁定时: 仅当最近 N 次投票连续一致且与锁定不同才换锁(自动跟随换队);
-          战斗特效造成的偶发误读在连续一致门槛下无法撼动锁定。
-        - 未锁定时: 连续一致达到阈值即锁定; 否则返回多数票兜底。
+        关键修复 (v1.8.18): 旧逻辑无论何时都要求连续 ANDROID_TEAM_LOCK_MIN_VOTES
+        次识别一致才锁定。但战斗特效/伤害数字会干扰队伍栏头像识别, 每次读到的
+        组合都不一样(实测每 0.1~0.2s 就在 渊武/折枝/漂泊者/奥古斯塔 间乱串),
+        连续一致永远达不到 -> 从未锁定 -> load_chars 每帧重建角色 -> 身份/index
+        全乱 -> 切人永远停在 1 号位。
+
+        现在: 战斗中只要拿到一次有效识别(至少 1 个槽位)就立即锁定, 之后整场
+        战斗用这个编队, 不再重识别/换锁 —— 符合用户「战斗期不识别、以编队为准」
+        的要求。非战斗(选队/大世界)仍用连续一致门槛, 避免换队瞬间误锁。
         """
         from collections import Counter, deque
         votes = getattr(self, '_android_team_votes', None)
@@ -1471,18 +1495,28 @@ class BaseWWTask(BaseTask):
             votes = deque(maxlen=ANDROID_TEAM_VOTE_WINDOW)
             self._android_team_votes = votes
         votes.append(identity)
+        lock = getattr(self, '_android_team_lock', None)
+        scene = getattr(self, 'scene', None)
+        # 与 android_locked_team_identity 一致: in_combat 为 True 或未知(None)
+        # 都按战斗中处理, 只有明确 False(选队/大世界)才走非战斗投票逻辑。
+        in_combat = scene is None or getattr(scene, 'in_combat', None) is not False
+
+        # 战斗中: 已锁定就绝不换锁(单帧误读不能撼动); 未锁定拿到首次有效识别立即锁定。
+        if in_combat and lock is not None:
+            return lock
+        if in_combat and identity is not None and any(identity):
+            self._android_team_lock = tuple(identity)
+            self._android_team_recheck_at = time.time()
+            self._log_android_team_lock(tuple(identity), None)
+            self._android_team_votes.clear()
+            return tuple(identity)
+
         recent = list(votes)[-ANDROID_TEAM_LOCK_MIN_VOTES:]
         stable = len(recent) >= ANDROID_TEAM_LOCK_MIN_VOTES and all(
             v == recent[0] for v in recent)
-        lock = getattr(self, '_android_team_lock', None)
         if stable and recent[0] is not None and any(recent[0]):
             if recent[0] != lock:
-                from src.char.CharFactory import canonical_display_name
-                shown = ', '.join(canonical_display_name(n) for n in recent[0])
-                message = f'安卓编队锁定: {shown}'
-                if lock:
-                    message += f' (原: {", ".join(canonical_display_name(n) for n in lock)})'
-                self.log_info(message)
+                self._log_android_team_lock(recent[0], lock)
             self._android_team_lock = recent[0]
             self._android_team_recheck_at = time.time()
             return recent[0]
@@ -1492,6 +1526,14 @@ class BaseWWTask(BaseTask):
         if counts:
             return counts.most_common(1)[0][0]
         return None
+
+    def _log_android_team_lock(self, identity, old_lock):
+        from src.char.CharFactory import canonical_display_name
+        shown = ', '.join(canonical_display_name(n) for n in identity)
+        message = f'安卓编队锁定: {shown}'
+        if old_lock:
+            message += f' (原: {", ".join(canonical_display_name(n) for n in old_lock)})'
+        self.log_info(message)
 
     def android_locked_team_identity(self):
         """当前生效的编队身份: 手填配置 > 投票锁定。

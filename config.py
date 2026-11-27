@@ -166,11 +166,35 @@ monthly_card_config_option = ConfigOption('Monthly Card Config', {
 # 直接固定尺度匹配必然弱匹配(实测 0.62~0.79 抖动), 队伍身份每帧都在漂 ->
 # 奶妈/主C/副C 类型乱变, 切人优先级全乱。除了缩放匹配+投票锁定外,
 # 允许用户直接手填编队(最高优先级, 完全不做画面识别 —— "编队为准")。
+# 手填编队下拉的角色选项(官方英文名, 用下拉选, 不会写错)。与 CharFactory 的
+# mismatched_names 官方名一致; 这里用静态列表避免 config.py 顶层 import 角色类
+# 造成循环依赖/拖慢启动。要加新角色时同步这里 + CharFactory 即可。
+_MUMU_TEAM_CHARACTERS = [
+    '', 'Aalto', 'Aemeath', 'Augusta', 'Baizhi', 'Brant', 'Buling', 'Calcharo',
+    'Camellya', 'Cantarella', 'Carlotta', 'Cartethyia', 'Changli', 'Chisa', 'Chixia',
+    'Ciaccona', 'Danjin', 'Denia', 'Encore', 'Galbrena', 'Hiyuki', 'Hsin', 'Iuno',
+    'Jianxin', 'JingRan', 'Jinhsi', 'Jiyan', 'Lily', 'Lingyang', 'Lucilla', 'Lucy',
+    'Lumi', 'Lupa', 'Luuk Herssen', 'Lynae', 'Mornye', 'Mortefi', 'Phoebe', 'Phrolova',
+    'Qingxiao', 'Qiuyuan', 'Rebecca', 'Roccia', 'Rover', 'Sanhua', 'Shorekeeper',
+    'Sigrika', 'Suisui', 'Suoming', 'Taoqi', 'Verina', 'Xiangli Yao', 'Yangyang',
+    'Yangyang: Xuanling', 'Yinlin', 'Youhu', 'Yuanwu', 'Zani', 'Zhezhi',
+]
 android_config_option = ConfigOption('MuMu 安卓 Config', {
     'MuMu 编队': '',
-}, description='MuMu 安卓编队(可选, 编队为准): 逗号分隔的角色名, 按编队槽位顺序, 如 绯雪,漂泊者·衍射,渊武 或 Hiyuki,Rover: Spectro,Yuanwu',
+    'MuMu 编队角色1': '',
+    'MuMu 编队角色2': '',
+    'MuMu 编队角色3': '',
+}, description='MuMu 安卓编队(可选, 编队为准): 推荐用下面三个「编队角色」下拉按槽位选, 不会写错名字; 选了就不做画面识别。留空则自动识别并锁定',
+    config_type={
+        'MuMu 编队角色1': {'type': 'drop_down', 'options': _MUMU_TEAM_CHARACTERS},
+        'MuMu 编队角色2': {'type': 'drop_down', 'options': _MUMU_TEAM_CHARACTERS},
+        'MuMu 编队角色3': {'type': 'drop_down', 'options': _MUMU_TEAM_CHARACTERS},
+    },
     config_description={
-        'MuMu 编队': 'MuMu 安卓编队角色名, 逗号分隔, 按编队槽位顺序填写; 支持中文名或英文名。填写后安卓端完全按此编队战斗, 不做画面识别; 留空则自动识别并锁定',
+        'MuMu 编队角色1': '编队 1 号位(当前出战). 用下拉选角色名, 选「(空)」表示不用此槽位。三个槽位选满 2~3 个即生效, 完全按此编队战斗、不做画面识别',
+        'MuMu 编队角色2': '编队 2 号位. 用下拉选, 防止手写角色名出错; 与角色1/3 不要重复',
+        'MuMu 编队角色3': '编队 3 号位. 两人队留空即可',
+        'MuMu 编队': '兼容旧版: 也可手动填逗号分隔的角色名(中文/英文皆可, 如 渊武,奥古斯塔)。上面的下拉优先于此项; 下拉全空时才用这里',
     }, show_at_tab=True, icon=Icon.PEOPLE)
 
 # 远控/串流窗口(试验性): UU远程 / ToDesk / 向日葵 / Parsec / Moonlight 这类软件把
