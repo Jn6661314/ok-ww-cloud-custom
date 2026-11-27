@@ -107,6 +107,10 @@ RELATIVE_FILES = [
     # - interaction_methods/phone_mirror：点击/滑动/按键变成手机触点
     'src/phone_mirror_engine.py',
     'src/phone_mirror_pairing.py',
+    # 投屏的键位映射(手游只认触点) + 校准窗口 + 画面预览窗口
+    'src/phone_mirror_keymap.py',
+    'src/phone_mirror_keymap_ui.py',
+    'src/phone_mirror_preview.py',
     'ok/device/capture_methods/phone_mirror_socket.py',
     'ok/device/interaction_methods/phone_mirror.py',
     # 内置投屏内核(无界面): 自己跟手机配对、拉流并用 Windows 自带解码器解码,

@@ -44,11 +44,16 @@ class TouchMode:
 
     @property
     def is_touch(self):
-        """当前是否走 ADB 触屏键位(安卓模拟器且输入通道为 ADB)。
+        """当前是否走触屏键位(安卓模拟器/手机投屏, 且输入通道是触屏式)。
 
         注意: 若配置成"像 PC 一样给模拟器窗口发键盘消息"(PostMessage/Pynput 等
-        窗口消息交互), esc 本身就是 PC 语义, 不做触屏改写 —— 只有真正走
-        ADBInteraction(input keyevent) 时才把 esc 语义换成键位表的 ` 键。
+        窗口消息交互), esc 本身就是 PC 语义, 不做触屏改写 —— 只有真正把输入
+        变成触点的通道(ADB `input keyevent` / 投屏内核的触点注入)才把 esc
+        语义换成键位表的 ` 键。
+
+        手机投屏(内置引擎)也算触屏: 手游不认 esc / KEYCODE_BACK, 按下去只会弹
+        "是否退出游戏"; 它的返回/菜单同样要用键位表的 ` —— 由
+        ``src/phone_mirror_keymap`` 翻译成那个位置的触点。
         """
         try:
             if not self.task.is_adb():
@@ -57,7 +62,10 @@ class TouchMode:
             if interaction is None:
                 return True
             from ok.device.interaction_methods.adb import ADBInteraction
-            return isinstance(interaction, ADBInteraction)
+            if isinstance(interaction, ADBInteraction):
+                return True
+            from ok.device.interaction_methods.phone_mirror import PhoneMirrorInteraction
+            return isinstance(interaction, PhoneMirrorInteraction)
         except Exception:
             try:
                 return bool(self.task.is_adb())

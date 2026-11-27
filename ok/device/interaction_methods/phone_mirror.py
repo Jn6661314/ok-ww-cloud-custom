@@ -13,6 +13,8 @@ from ok.device.capture_methods.phone_mirror_socket import TOUCH_DOWN, TOUCH_MOVE
 from ok.device.interaction_methods.base import BaseInteraction
 from ok.util.logger import Logger
 
+from src import phone_mirror_keymap as keymap
+
 logger = Logger.get_logger(__name__)
 
 # 一次滑动分几步发出去(步数太多会拖慢, 太少手机会当成拖拽而不是滑动)。
@@ -88,9 +90,24 @@ class PhoneMirrorInteraction(BaseInteraction):
     # ------------------------------------------------------------------
 
     def send_key(self, key, down_time=0.02):
+        """按键: 有键位映射就发触点, 没有才退回手机按键事件。
+
+        手游只认触点, 按键事件它是收不到的(MuMu 上能生效是因为模拟器自带
+        键位映射; 真机没有这一层)。所以 e / 1 / 2 / ` 这些必须查
+        ``src/phone_mirror_keymap`` 那张表, 在对应位置按一下。
+        """
         super().send_key(key, down_time=down_time)
+        point = keymap.lookup(key)
+        if point is not None:
+            # 用和点击一样的手法: 按下 -> 停一下 -> 抬起, 太短会被游戏吞掉。
+            self.capture.send_touch(TOUCH_DOWN, *point)
+            time.sleep(max(down_time, 0.02))
+            self.capture.send_touch(TOUCH_UP, *point)
+            return True
         if not self.capture.send_key(key):
-            logger.debug(f'手机投屏: 键 {key} 没有对应的手机按键, 已忽略')
+            logger.debug(f'手机投屏: 键 {key} 既没映射也没对应的手机按键, 已忽略')
+            return False
+        return True
 
     def back(self):
         self.send_key('esc')

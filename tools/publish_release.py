@@ -26,6 +26,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.26', 'v1.8.26 · 手机投屏：按键变触点（键位校准）+ 电脑上能看手机画面 / Keys become touches (calibratable) and a preview window', 'HEAD'),
     ('v1.8.25', 'v1.8.25 · 手机投屏能连上但启动不了（抓屏通道异步连，框架问得太早）/ Fix "connected but cannot start": the capture channel connected a few ms too late', 'HEAD'),
     ('v1.8.24', 'v1.8.24 · 手机投屏连不上：手机端把「这台设备的自动重连」关掉了 / The phone turned reconnecting off for this device', 'HEAD'),
     ('v1.8.23', 'v1.8.23 · 修好手机投屏启动不了（内核等手机上线，不再秒退）/ Fix the mirroring engine quitting right after start', 'HEAD'),
