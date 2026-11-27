@@ -280,7 +280,7 @@ class DeviceManager:
             if getattr(self, 'phone_mirror_engine_mode', False):
                 picture = getter() if callable(getter) else None
                 if picture:
-                    logger.info(f'手机投屏(内置引擎)画面区 {picture[0]}x{picture[1]}; '
+                    logger.info(f'手机投屏画面区 {picture[0]}x{picture[1]}; '
                                 f'已归一化到模板原生分辨率, 点击坐标按画面区换算。')
                 return None
             window = self.hwnd_window
@@ -500,7 +500,7 @@ class DeviceManager:
             # 内置投屏引擎没有窗口, 但框架需要一个"设备"来挂抓屏和输入。
             imei = 'pc_phone_mirror'
             pc_device = {"address": "", "imei": imei, "device": "windows",
-                         "model": "", "nick": "手机投屏(内置引擎)",
+                         "model": "", "nick": "手机投屏",
                          "width": 1920, "height": 1080,
                          "hwnd": "手机投屏", "capture": "windows",
                          "connected": True, "full_path": "",
@@ -982,11 +982,11 @@ class DeviceManager:
         """内置投屏引擎: 画面从本机 socket 收, 不抓窗口。"""
         engine = self.phone_mirror_engine
         if engine is None or PhoneMirrorSocketCaptureMethod is None:
-            logger.error('手机投屏(内置引擎): 投屏内核没起来, 无法抓屏')
+            logger.error('手机投屏: 投屏内核没起来, 无法抓屏')
             self.capture_method = None
             return
         if engine.port is None and not engine.wait_ready(timeout=5.0):
-            logger.error('手机投屏(内置引擎): 投屏内核还没就绪(手机上可能还没点允许)')
+            logger.error('手机投屏: 投屏内核还没就绪(手机上可能还没点允许)')
             self.capture_method = None
             return
         old = self.capture_method
@@ -994,7 +994,7 @@ class DeviceManager:
             old.close()
         self.capture_method = PhoneMirrorSocketCaptureMethod(engine.port, exit_event=self.exit_event)
         self.capture_method.start()
-        logger.info(f'手机投屏(内置引擎): 已连接投屏内核, 画面端口 {engine.port}')
+        logger.info(f'手机投屏: 已连接投屏内核, 画面端口 {engine.port}')
         if self.interaction:
             self.interaction.capture = self.capture_method
 

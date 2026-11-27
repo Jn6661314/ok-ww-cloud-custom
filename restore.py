@@ -58,6 +58,9 @@ RELATIVE_FILES = [
     'src/globals.py',
     # 手机投屏(NectarLink)：用真机投屏代替 MuMu 模拟器（下载入口 + 窗口识别）
     'src/phone_mirror.py',
+    # 手机投屏配置迁移：两个旧菜单(手机投屏(NectarLink) / 手机投屏(内置引擎))
+    # 合成一个「手机投屏」，迁移时把用户已有的设置并过去，免得改名后丢配置
+    'src/phone_mirror_config.py',
     # 手机投屏抓屏适配层：裁掉 NectarLink 工具条/黑边 + 归一化分辨率 + 坐标换算
     'ok/device/capture_methods/phone_mirror.py',
     # 手机投屏(内置引擎)：自带投屏内核，不用再装 NectarLink 桌面端

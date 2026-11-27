@@ -75,11 +75,18 @@ class ConfigTest(unittest.TestCase):
 
     def test_phone_mirror_option_registered(self):
         names = [option.name for option in config.config['global_configs']]
-        self.assertIn('手机投屏(NectarLink)', names)
+        self.assertIn('手机投屏', names)
+
+    def test_only_one_phone_mirror_menu(self):
+        """两个投屏菜单已经合成一个, 不能再出现第二个。"""
+        names = [option.name for option in config.config['global_configs']]
+        phone_menus = [n for n in names if '手机投屏' in n]
+        self.assertEqual(phone_menus, ['手机投屏'],
+                         f'手机投屏只能有一个菜单, 实际有: {phone_menus}')
 
     def test_phone_mirror_option_has_download_button(self):
         option = next(o for o in config.config['global_configs']
-                      if o.name == '手机投屏(NectarLink)')
+                      if o.name == '手机投屏')
         button = option.config_type['下载手机端']
         self.assertEqual(button['type'], 'button')
         self.assertTrue(callable(button['callback']))
@@ -87,9 +94,28 @@ class ConfigTest(unittest.TestCase):
 
     def test_phone_mirror_option_has_apk_url(self):
         option = next(o for o in config.config['global_configs']
-                      if o.name == '手机投屏(NectarLink)')
+                      if o.name == '手机投屏')
         self.assertEqual(option.default_config['手机端下载地址'],
                          phone_mirror.ANDROID_MIRROR_APK_URL)
+
+    def test_phone_mirror_option_has_mode_switch(self):
+        """模式下拉要有内置引擎和桌面端两个选项。"""
+        option = next(o for o in config.config['global_configs']
+                      if o.name == '手机投屏')
+        mode = option.config_type['模式']
+        self.assertEqual(mode['type'], 'drop_down')
+        self.assertEqual(mode['options'], ['内置引擎', '桌面端'])
+        self.assertEqual(option.default_config['模式'], '内置引擎')
+
+    def test_phone_mirror_option_keeps_engine_settings(self):
+        """合并后内置引擎的设置项都还在(不能因为合并丢了功能)。"""
+        option = next(o for o in config.config['global_configs']
+                      if o.name == '手机投屏')
+        for key in ('Enable', '手机', '画面宽度', '帧率', '码率',
+                    '配对手机', '启动投屏内核', '下载手机端', '手机端下载地址'):
+            self.assertIn(key, option.default_config, f'缺少设置项 {key}')
+        self.assertTrue(callable(option.config_type['配对手机']['callback']))
+        self.assertTrue(callable(option.config_type['启动投屏内核']['callback']))
 
     def test_stream_preset_lists_nectarlink(self):
         option = next(o for o in config.config['global_configs']

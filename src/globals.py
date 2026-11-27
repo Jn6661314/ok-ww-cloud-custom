@@ -6,8 +6,11 @@ from ok import Config, Logger, get_path_relative_to_exe, og
 
 logger = Logger.get_logger(__name__)
 
-# 内置投屏引擎的配置名(与 config.py 里的 ConfigOption 一致)。
-PHONE_MIRROR_ENGINE_CONFIG = '手机投屏(内置引擎)'
+# 手机投屏的配置名(与 config.py 里的 ConfigOption 一致)。
+PHONE_MIRROR_CONFIG = '手机投屏'
+# 两种投屏模式(见 src/phone_mirror_config.py)。
+PHONE_MIRROR_MODE_ENGINE = '内置引擎'
+PHONE_MIRROR_MODE_DESKTOP = '桌面端'
 
 
 class Globals:
@@ -16,8 +19,10 @@ class Globals:
         self._yolo_model = None
         self.mini_map_arrow = None
         self.logged_in = False
+        # 远控/串流窗口(UU远程/ToDesk/Moonlight 等)是另一条独立的路, 先处理;
+        # 手机投屏在后面, 它的优先级更高(会覆盖成手机设备)。
         self._apply_stream_window()
-        self._apply_phone_mirror_engine()
+        self._apply_phone_mirror()
 
     def _apply_stream_window(self):
         """试验性: 若开了「远控/串流窗口」, 把设备切换成对应窗口。
@@ -36,8 +41,74 @@ class Globals:
         except Exception as e:
             logger.warning(f'apply stream window failed: {e}')
 
-    def _apply_phone_mirror_engine(self):
-        """内置投屏引擎: 开启时把内核跑起来, 并让设备管理器改用它。
+    def _apply_phone_mirror(self):
+        """手机投屏: 按「模式」选择走内置内核还是 NectarLink 桌面端。
+
+        两种模式都把设备切换成"手机"(画面里是安卓手机), 任务侧按安卓端处理
+        (编队识别/切人/大世界判定)。
+
+          * 内置引擎 —— 画面来自投屏内核推过来的像素, 分辨率/比例完全由手机和
+            配置决定, 不再有"分辨率不符合 16:9"的问题;
+          * 桌面端   —— 画面来自 NectarLink 桌面端开的投屏窗口, 抓窗口 + 真实
+            键鼠点击, 由桌面端按屏幕比例转回手机。
+        """
+        try:
+            from src.phone_mirror_config import MODE_DESKTOP, MODE_ENGINE
+        except Exception as e:
+            logger.warning(f'phone mirror config unavailable: {e}')
+            return False
+        device_manager = getattr(og, 'device_manager', None)
+        global_config = getattr(og, 'global_config', None)
+        if global_config is None and device_manager is not None:
+            global_config = getattr(device_manager, 'global_config', None)
+        if global_config is None:
+            return False
+        try:
+            option = global_config.get_config(PHONE_MIRROR_CONFIG)
+        except Exception as e:
+            logger.debug(f'phone mirror config not available: {e}')
+            return False
+        try:
+            if not option.get('Enable', False):
+                return False
+            mode = str(option.get('模式', MODE_ENGINE) or MODE_ENGINE).strip()
+            if mode == MODE_DESKTOP:
+                return self._apply_phone_mirror_desktop(option, device_manager)
+            return self._apply_phone_mirror_engine(option, device_manager)
+        except Exception as e:
+            logger.warning(f'apply phone mirror failed: {e}')
+            return False
+
+    def _apply_phone_mirror_desktop(self, option, device_manager):
+        """桌面端模式: 抓 NectarLink 桌面端开的投屏窗口。
+
+        走的是「远控/串流窗口」那条链路(只按窗口标题匹配), 画面抓自窗口,
+        点击用真实键鼠打到窗口上, 由 NectarLink 桌面端转回手机。
+        """
+        try:
+            from src.stream_window import apply_stream_window
+            from src.phone_mirror import NECTARLINK_WINDOW_PATTERN
+        except Exception as e:
+            logger.warning(f'phone mirror desktop mode unavailable: {e}')
+            return False
+        if device_manager is None:
+            return False
+        # 直接给窗口标题正则, 不依赖「远控/串流窗口」菜单里的 Preset ——
+        # 手机投屏已经是独立的一项设置, 不该再去别的菜单里选一次。
+        try:
+            ok = apply_stream_window(None, device_manager, title=NECTARLINK_WINDOW_PATTERN, phone=True)
+        except TypeError:
+            # 旧版 apply_stream_window 没有这些参数, 退回读配置的做法。
+            ok = apply_stream_window(None, device_manager)
+        if not ok:
+            logger.warning('手机投屏(桌面端): 没能切到 NectarLink 投屏窗口。')
+            return False
+        self._relax_resolution_for_phone_mirror(device_manager)
+        logger.info('手机投屏(桌面端): 已启用, 画面来自 NectarLink 桌面端的投屏窗口。')
+        return True
+
+    def _apply_phone_mirror_engine(self, option, device_manager):
+        """内置引擎模式: 开启时把内核跑起来, 并让设备管理器改用它。
 
         画面不再来自任何窗口, 而是投屏内核推过来的像素, 所以分辨率/比例完全
         由手机和这里的设置决定, 也就不会再有"分辨率不符合 16:9"的问题。
@@ -47,20 +118,9 @@ class Globals:
         except Exception as e:
             logger.warning(f'phone mirror engine unavailable: {e}')
             return False
-        device_manager = getattr(og, 'device_manager', None)
-        global_config = getattr(og, 'global_config', None)
-        if global_config is None and device_manager is not None:
-            global_config = getattr(device_manager, 'global_config', None)
-        if global_config is None:
+        if device_manager is None:
             return False
         try:
-            option = global_config.get_config(PHONE_MIRROR_ENGINE_CONFIG)
-        except Exception as e:
-            logger.debug(f'phone mirror engine config not available: {e}')
-            return False
-        try:
-            if not option.get('Enable', False):
-                return False
             engine = get_engine()
             engine.configure(device=str(option.get('手机', '')).strip(),
                              max_size=int(option.get('画面宽度', 1920) or 1920),
@@ -74,7 +134,7 @@ class Globals:
                 return False
             setter(engine)
             self._relax_resolution_for_phone_mirror(device_manager)
-            logger.info('手机投屏(内置引擎): 已启用, 画面来自内置投屏内核, '
+            logger.info('手机投屏: 已启用(内置引擎), 画面来自内置投屏内核, '
                         '不需要安装 NectarLink 桌面端。')
             return True
         except Exception as e:

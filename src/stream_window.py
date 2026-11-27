@@ -106,14 +106,32 @@ def stream_window_phone_mode(global_config):
         return False
 
 
-def apply_stream_window(global_config=None, device_manager=None):
-    """把远控/串流窗口切换成当前设备; 未启用或配置不全时返回 False。"""
-    settings = stream_window_settings(global_config)
-    if not settings:
+def apply_stream_window(global_config=None, device_manager=None, title=None, phone=None):
+    """把远控/串流窗口切换成当前设备; 未启用或配置不全时返回 False。
+
+    Args:
+        global_config: 全局配置。传 None 表示"不读配置", 直接用下面两个参数。
+        device_manager: 设备管理器。
+        title: 窗口标题正则。给了就用它, 不读配置里的 Preset/Window Title。
+        phone: True 表示窗口里是安卓手机画面。给了就用它, 不读配置里的 Preset。
+    """
+    if title is not None or phone is not None:
+        # 直接指定了窗口和模式(手机投屏的桌面端模式就是这么用的): 不看配置。
+        settings = None
+    else:
+        settings = stream_window_settings(global_config)
+    if settings is None and title is None:
         return False
-    enabled, title, force_pynput = settings
-    if not enabled:
-        return False
+    if settings is not None:
+        enabled, config_title, force_pynput = settings
+        if not enabled:
+            return False
+    else:
+        config_title, force_pynput = '', True
+    if title is None:
+        title = config_title
+    if phone is None:
+        phone = stream_window_phone_mode(global_config)
     if device_manager is None:
         logger.warning('远控/串流窗口: 取不到 device_manager, 跳过。')
         return False
@@ -121,7 +139,6 @@ def apply_stream_window(global_config=None, device_manager=None):
     if setter is None:
         logger.warning('远控/串流窗口: 当前框架版本不支持, 跳过。')
         return False
-    phone = stream_window_phone_mode(global_config)
     # 未填标题也启用: 进入"列出所有窗口"模式, 让用户在设备下拉里手动选远控窗口,
     # 而不是静默退回默认 PC 客户端(那样下拉里根本看不到远控窗口)。
     try:

@@ -6,12 +6,21 @@ from ok import Box, ConfigOption, Icon, Logger
 from ok.util.GlobalConfig import create_basic_options
 from src.game_launcher import get_game_launch_arguments
 from src.phone_mirror import ANDROID_MIRROR_APK_URL, open_android_mirror_apk
+from src.phone_mirror_config import (MODE_DESKTOP, MODE_ENGINE,
+                                     migrate_phone_mirror_config)
 from src.task.process_feature import process_feature
 from src.task.task_icons import task_icon
 
 version = "v3.8.15"
 
 logger = Logger.get_logger(__name__)
+
+# 应用启动最早期就把旧的投屏配置并进合并后的菜单。必须在框架读配置之前做完:
+# ConfigOption 的名字就是配置文件名, 不迁移的话用户原来的设置会"消失"。
+try:
+    migrate_phone_mirror_config()
+except Exception as e:  # 迁移失败不该挡住启动
+    logger.warning(f'迁移手机投屏配置失败: {e}')
 
 
 def _open_phone_mirror_apk():
@@ -25,13 +34,13 @@ def _open_phone_mirror_pairing():
         from src.phone_mirror_engine import get_engine
         from src.phone_mirror_pairing import open_pairing_dialog
     except Exception as e:
-        logger.error(f'手机投屏(内置引擎): 打开配对窗口失败({e})')
+        logger.error(f'手机投屏: 打开配对窗口失败({e})')
         return False
     engine = get_engine()
     if not engine.running:
         engine.pair = True
         if not engine.start():
-            logger.error('手机投屏(内置引擎): 投屏内核启动失败')
+            logger.error('手机投屏: 投屏内核启动失败')
             return False
     open_pairing_dialog(engine=engine)
     return True
@@ -42,11 +51,11 @@ def _start_phone_mirror_engine():
     try:
         from src.phone_mirror_engine import get_engine
     except Exception as e:
-        logger.error(f'手机投屏(内置引擎): 启动失败({e})')
+        logger.error(f'手机投屏: 投屏内核启动失败({e})')
         return False
     engine = get_engine()
     if engine.start():
-        logger.info('手机投屏(内置引擎): 内核已启动, 等手机上点「允许」。')
+        logger.info('手机投屏: 内核已启动, 等手机上点「允许」。')
         return True
     return False
 
@@ -262,32 +271,20 @@ stream_config_option = ConfigOption('远控串流窗口(试验性)', {
        'Force Pynput': '远控软件基本不处理窗口消息(PostMessage), 必须用真实键鼠事件, 保持开启',
    }, show_at_tab=True, icon='monitor')
 
-# 手机投屏(NectarLink): 用真机投屏代替 MuMu 模拟器驱动鸣潮。
-# 桌面端把手机画面开成一个窗口(标题 "<设备名> · NectarLink"), 并把鼠标点击按
-# 屏幕比例转发到手机; ok-ww 抓这个窗口 + 真实键鼠点击, 就等于在操作手机。
-# 编队识别/切人按安卓端处理(见 src/phone_mirror.py 与 BaseWWTask.is_adb)。
-phone_mirror_option = ConfigOption('手机投屏(NectarLink)', {
-    '下载手机端': '',
-    '手机端下载地址': ANDROID_MIRROR_APK_URL,
-}, description='用真机投屏(NectarLink)代替模拟器驱动鸣潮: 手机画面投到 PC 窗口里, '
-              '脚本抓窗口并点击, 点击由投屏软件按比例转回手机, 坐标自动适配缩放/黑边/横竖屏。'
-              '步骤: 1) 手机装好下面的 NectarLink 客户端并与电脑配对; '
-              '2) 桌面端点开手机投屏窗口; '
-              '3) 在「远控串流窗口(试验性)」里把 Preset 选成「NectarLink 手机投屏」并开启。'
-              '注意: 配置名不要带 "/", 否则框架会当成目录。',
-   config_type={
-       '下载手机端': {'type': 'button', 'text': '下载手机端(网盘)', 'callback': _open_phone_mirror_apk},
-   },
-   config_description={
-       '下载手机端': '点击打开网盘, 下载 NectarLink 的 Android 客户端(安装到手机上并与电脑配对)',
-       '手机端下载地址': '手机端客户端的下载地址(网盘分享, 含提取码)。默认已填好, 可自行替换',
-   }, show_at_tab=True, icon='monitor')
-
-# 手机投屏(内置引擎): 把投屏内核直接装进 ok-ww, 不用再单独装 NectarLink 桌面端。
-# 内核负责跟手机配对、拉流、解码, 画面通过本机 socket 推给 ok-ww; ok-ww 的点击
-# 直接变成手机上的触点。分辨率/帧率/码率由这里决定, 不再受桌面端窗口尺寸影响。
-phone_mirror_engine_option = ConfigOption('手机投屏(内置引擎)', {
+# 手机投屏: 用真机投屏代替 MuMu 模拟器驱动鸣潮。
+#
+# 有两条路, 用「模式」切换:
+#   内置引擎 —— 投屏内核直接编进 ok-ww, 不用装 NectarLink 桌面端。画面由 ok-ww
+#               自己决定分辨率/比例, 点击直接变成手机触点(不经过真实鼠标)。
+#   桌面端   —— 旧的方案: 画面来自 NectarLink 桌面端开的投屏窗口
+#               (标题 "<设备名> · NectarLink"), ok-ww 抓窗口 + 真实键鼠点击,
+#               点击由桌面端按屏幕比例转回手机。
+#
+# 两条路都要把手机画面按安卓端处理(编队识别/切人), 见 src/phone_mirror.py
+# 与 BaseWWTask.is_adb。
+phone_mirror_option = ConfigOption('手机投屏', {
     'Enable': False,
+    '模式': MODE_ENGINE,
     '手机': '',
     '画面宽度': '1920',
     '帧率': '30',
@@ -296,25 +293,32 @@ phone_mirror_engine_option = ConfigOption('手机投屏(内置引擎)', {
     '启动投屏内核': '',
     '下载手机端': '',
     '手机端下载地址': ANDROID_MIRROR_APK_URL,
-}, description='把手机投屏直接集成进 ok-ww: 不需要安装 NectarLink 桌面端, 画面比例和分辨率'
-              '由 ok-ww 自己决定, 点击直接变成手机触点(取代 MuMu 模拟器)。'
-              '步骤: 1) 手机装好下面的 NectarLink 客户端; 2) 点「配对手机」让手机扫码; '
-              '3) 开启本选项并重启 ok-ww, 设备下拉里选「手机投屏(内置引擎)」。'
+}, description='用真机投屏代替模拟器驱动鸣潮: 手机画面投到 PC 上, 脚本抓画面并点击, '
+              '点击按屏幕比例转回手机, 坐标自动适配缩放/黑边/横竖屏。'
+              '模式选「内置引擎」时不需要安装 NectarLink 桌面端(推荐), '
+              '画面分辨率/比例完全由 ok-ww 决定; '
+              '选「桌面端」则需要先装 NectarLink 桌面端并打开它的投屏窗口。'
+              '步骤: 1) 手机装好下面的 NectarLink 客户端; '
+              '2) 内置引擎模式点「配对手机」让手机扫码; '
+              '3) 开启本选项并重启 ok-ww, 设备下拉里选「手机投屏」。'
               '注意: 每次重新投屏都要在手机上点「允许」, 所以别反复重启 ok-ww。'
               '注意: 配置名不要带 "/", 否则框架会当成目录。',
    config_type={
        '配对手机': {'type': 'button', 'text': '配对手机(扫码)', 'callback': _open_phone_mirror_pairing},
        '启动投屏内核': {'type': 'button', 'text': '启动投屏内核', 'callback': _start_phone_mirror_engine},
        '下载手机端': {'type': 'button', 'text': '下载手机端(网盘)', 'callback': _open_phone_mirror_apk},
+       '模式': {'type': 'drop_down', 'options': [MODE_ENGINE, MODE_DESKTOP]},
        '画面宽度': {'type': 'drop_down', 'options': ['1280', '1600', '1920', '2560']},
        '帧率': {'type': 'drop_down', 'options': ['24', '30', '60']},
    },
    config_description={
-       'Enable': '开启后设备下拉里出现「手机投屏(内置引擎)」, 画面来自内置投屏内核而不是窗口; 改完需要重启 ok-ww',
-       '手机': '要投屏的手机(id 前缀或名字); 留空表示只有一台配对手机时自动选',
-       '画面宽度': '向手机请求的画面最长边(像素)。1920 对应 1080p, 模板按 1:1 使用最准',
-       '帧率': '向手机请求的帧率。30 足够, 60 更跟手但更吃带宽和 CPU',
-       '码率': '向手机请求的视频码率(bps)。8000000 = 8 Mbps',
+       'Enable': '开启后设备下拉里出现「手机投屏」; 改完需要重启 ok-ww',
+       '模式': '内置引擎 = ok-ww 自带投屏内核, 不用装 NectarLink 桌面端(推荐); '
+              '桌面端 = 抓 NectarLink 桌面端开的投屏窗口(需先装桌面端并打开窗口)',
+       '手机': '内置引擎模式: 要投屏的手机(id 前缀或名字); 留空表示只有一台配对手机时自动选',
+       '画面宽度': '内置引擎模式: 向手机请求的画面最长边(像素)。1920 对应 1080p, 模板按 1:1 使用最准',
+       '帧率': '内置引擎模式: 向手机请求的帧率。30 足够, 60 更跟手但更吃带宽和 CPU',
+       '码率': '内置引擎模式: 向手机请求的视频码率(bps)。8000000 = 8 Mbps',
        '配对手机': '打开配对窗口, 手机用 NectarLink 客户端扫码即可配对(只需一次)',
        '启动投屏内核': '立刻把投屏内核跑起来; 手机上点「允许」后就能出画面',
        '下载手机端': '点击打开网盘, 下载 NectarLink 的 Android 客户端(安装到手机上)',
@@ -348,8 +352,7 @@ config = {
         ["src.gui.CharacterCodeTab", "CharacterCodeTab"],
     ],
     'global_configs': [basic_config_option, key_config_option, char_config_option, monthly_card_config_option,
-                       android_config_option, stream_config_option, phone_mirror_option,
-                       phone_mirror_engine_option],
+                       android_config_option, stream_config_option, phone_mirror_option],
     'ocr': {
         'lib': 'onnxocr',
         'auto_simplify': True,
