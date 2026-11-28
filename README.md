@@ -21,6 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 | 版本 | 摘要 |
 | --- | --- |
+| [v1.8.29](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.29) | 关掉 ok-ww 后投屏内核不再残留（atexit + Job Object），配置里新增「停止投屏内核」按钮；测试口径纠正为 486 项 |
 | [v1.8.28](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.28) | 配对不再误复用残留内核、补回 `child_session` 方法、云游戏默认分辨率改 1600×900（Win10 闪退）；精简本文档与安装提示词 |
 | [v1.8.27](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.27) | 基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 首个「解压即用」绿色成品包 |
 | [v1.8.26](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.26) | 手机投屏按键变可校准触点 + 电脑上实时显示手机画面 |
@@ -92,7 +93,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ## 与官方 v3.8.18 的差异
 
-| 能力 | 官方 v3.8.18 | 本仓库 v1.8.28 |
+| 能力 | 官方 v3.8.18 | 本仓库 v1.8.29 |
 | --- | --- | --- |
 | 云鸣潮设备入口 / 启动 / 掉线重连 | ✅ 原生 | 沿用官方 |
 | 日常任务注册次数 | ✅ 单个 `DailyTask`，按所选设备自动区分操作 | 沿用官方（已删除我们自建的「云每日」） |
