@@ -95,8 +95,11 @@ class PhoneMirrorInteraction(BaseInteraction):
         手游只认触点, 按键事件它是收不到的(MuMu 上能生效是因为模拟器自带
         键位映射; 真机没有这一层)。所以 e / 1 / 2 / ` 这些必须查
         ``src/phone_mirror_keymap`` 那张表, 在对应位置按一下。
+
+        命中映射时**不再**走父类的 ADB 按键: 伪设备没有 adb shell, 那一下既是
+        白按, 也可能先把异常抛出来挡住后面的触点。语义键(f2 / f_break /
+        battle_pass)在 ADB_KEY_MAP 里根本没有对应键码, 更不能交给它。
         """
-        super().send_key(key, down_time=down_time)
         point = keymap.lookup(key)
         if point is not None:
             # 用和点击一样的手法: 按下 -> 停一下 -> 抬起, 太短会被游戏吞掉。

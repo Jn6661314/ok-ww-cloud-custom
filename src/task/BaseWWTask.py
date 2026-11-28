@@ -1821,7 +1821,11 @@ class BaseWWTask(BaseTask):
             # 一律点右上角"索拉指南"图标(方框书本)。绝不能无条件回落到
             # send_key('f2') —— MuMu 发 F2 什么也不会发生, 只会白等超时。
             self.log_info(self.tr('click guidebook icon (touch) to open the book'))
-            self.open_touch_book()
+            if not self.open_touch_book():
+                # 别把"书没打开"伪装成"找不到 boss 列表": 这两件事的修法完全不同
+                # (前者去校准 F2 触点, 后者是识别问题)。仍然往下走一次, 万一只是
+                # 判定太严、画面其实已经开出来了。
+                self.log_warning(self.tr('未能确认索拉指南已打开, 仍尝试读取列表'))
         else:
             book_key = self.key_config.get('Guidebook Key', self.key_config.get('索拉指南', 'f2'))
             self.log_info(self.tr('click {book_key} to open the book').format(book_key=book_key))
@@ -1836,7 +1840,9 @@ class BaseWWTask(BaseTask):
                 self.sleep(0.02)
                 self.send_key_up('alt')
                 self.sleep(4)
-        gray_book_boss = self.wait_book(feature)
+        # 触屏端打开面板比 PC 慢(投屏还多一层编码延迟), 3 秒常常不够:
+        # 书已经开了、图标还没画全, 就判成"找不到列表"直接中断整条每日任务。
+        gray_book_boss = self.wait_book(feature, time_out=6 if self.touch.is_touch else 3)
         if not gray_book_boss:
             self.log_error(self.tr("can't find gray_book_boss, make sure f2 is the hotkey for book"), notify=True)
             raise Exception(self.tr("can't find gray_book_boss, make sure f2 is the hotkey for book"))

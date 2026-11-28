@@ -307,13 +307,69 @@ class BreakKeyTest(unittest.TestCase):
         self.assertTrue(fake.clicked, '没校准时应维持点提示位置的老逻辑')
 
 
+class BattlePassTouchTest(unittest.TestCase):
+    """先约电台: PC 要按住 Alt 才显示入口, 手游没有 Alt, 只能点校准出来的触点。"""
+
+    def setUp(self):
+        path = keymap.keymap_path()
+        if os.path.exists(path):
+            os.remove(path)
+        keymap._cache['mtime'] = None
+        keymap._cache['map'] = None
+
+    def tearDown(self):
+        path = keymap.keymap_path()
+        if os.path.exists(path):
+            os.remove(path)
+
+    def _task(self):
+        from src.task.DailyTask import DailyTask
+        task = FakeTask(PhoneMirrorInteraction(FakeCapture()))
+        task.touch = TouchMode(task)
+        task.is_browser = lambda: False
+        task.sleep = lambda *a, **k: None
+        task.back = lambda **k: None
+        task.ocr = lambda *a, **k: []
+        task.log_debug = lambda *a, **k: None
+        return DailyTask, task
+
+    def test_battle_pass_aliases_share_one_point(self):
+        self.assertEqual(keymap.normalize_key('先约电台'), 'battle_pass')
+        self.assertEqual(keymap.normalize_key('battlepass'), 'battle_pass')
+        self.assertEqual(keymap.normalize_key('bp'), 'battle_pass')
+        self.assertIn('先约电台', dict(keymap.CALIBRATION_KEYS)['battle_pass'])
+
+    def test_calibrated_battle_pass_point_is_clicked_first(self):
+        keymap.save({'battle_pass': (0.62, 0.11)})
+        DailyTask, task = self._task()
+        task._battle_pass_opened = lambda: True
+
+        DailyTask._open_battle_pass(task)
+
+        self.assertEqual(task.sent_keys, ['battle_pass'])
+        self.assertEqual(task.clicked, [], '校准后不该再点右上角候选位置')
+        taps = [(t[1], t[2]) for t in task._interaction.capture.touches if t[0] == TOUCH_DOWN]
+        self.assertEqual(taps, [(0.62, 0.11)])
+
+    def test_phone_mirror_never_sends_alt(self):
+        # 投屏手机端没有 Alt 这个键, 发它只会让右上角图标一直不出现。
+        DailyTask, task = self._task()
+        task._battle_pass_opened = lambda: False
+        task.send_key_down = lambda *a, **k: self.fail('投屏不该发 alt')
+        task.send_key_up = lambda *a, **k: self.fail('投屏不该发 alt')
+
+        DailyTask._open_battle_pass(task)
+
+        self.assertEqual(task.sent_keys, [])
+        self.assertTrue(task.clicked, '没校准时应该退到点右上角候选位置')
+
+
 def tearDownModule():
     shutil.rmtree(CONFIG_DIR, ignore_errors=True)
     if _OLD_CONFIG_DIR is None:
         os.environ.pop('OKWW_CONFIG_DIR', None)
     else:
         os.environ['OKWW_CONFIG_DIR'] = _OLD_CONFIG_DIR
-
 
 if __name__ == '__main__':
     unittest.main()

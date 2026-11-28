@@ -60,11 +60,20 @@ STROKE_VAL_MIN = 150
 # 模板侧灰度掩码阈值
 TEMPLATE_GRAY_MIN = 90
 
-# 多尺度搜索的缩放比例(安卓图标与 PC 模板尺寸不完全一致)
-SCALES = (0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.10)
+# 多尺度搜索的缩放比例(安卓图标与 PC 模板尺寸不完全一致)。
+#
+# 上限必须够高: 手机投屏的画面是「裁掉黑边后等比放大到 1080 高」的, 20:9 的手机
+# 会从 1901x808 放大到 2540x1080(1.34 倍), 左列图标跟着一起放大。以前只到 1.10,
+# 手机上的类别图标永远差一档, 于是「书明明开着却说找不到任务列表」。
+SCALES = (0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95, 1.05, 1.15, 1.25, 1.35, 1.45)
 
 # 判定为同一类别所需的最小 IoU。实测正确匹配 0.68~0.88, 错误匹配 < 0.5。
 DEFAULT_IOU = 0.55
+
+# 弱匹配下限。手机端图标比 PC 模板粗一圈(线宽、描边、发光), 笔画 IoU 常常
+# 掉到 0.4~0.5。与其因为差一点就放弃整条每日任务, 不如点进去 —— 万一点错类别,
+# 上层拿不到任务列表会重试, 比直接抛「找不到boss列表」好。
+FALLBACK_IOU = 0.38
 
 # 连通域过滤(用于判断索拉指南是否已打开)
 MIN_AREA = 200
@@ -218,8 +227,13 @@ def find_book_tab(frame, template, iou_threshold=DEFAULT_IOU):
         score, loc, th, tw = found
         if best is None or score > best[4]:
             best = (x0 + loc[0] + tw // 2, y0 + loc[1] + th // 2, tw, th, score)
-    if best is None or best[4] < iou_threshold:
+    if best is None:
         return None
+    if best[4] < iou_threshold:
+        if best[4] < FALLBACK_IOU:
+            logger.info(f'安卓索拉指南: 类别图标没匹配上(最佳 IoU={best[4]:.2f})')
+            return None
+        logger.info(f'安卓索拉指南: 类别图标弱匹配(IoU={best[4]:.2f}), 先按它点')
     return best
 
 

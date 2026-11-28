@@ -293,17 +293,27 @@ class DailyTask(EchoBoxMixin, WWOneTimeTask, BaseCombatTask):
         """唤起先约电台界面.
 
         原版靠 Alt + 点击右上角图标, 但云游戏浏览器会吞掉 Alt (Windows 菜单),
-        导致界面始终打不开. 浏览器模式下直接点击入口, 并准备多个候选坐标;
-        最后再走一次主终端的文字入口作为兜底.
+        手机投屏更没有 Alt 这个键 —— 手游里那个入口本来就不靠 Alt 显示, 只能由
+        用户在校准窗口里把它点出来(battle_pass)。三条路依次试:
+          1. 投屏且校准过「先约电台」触点: 直接点它;
+          2. 直接点右上角入口(浏览器/投屏给多个候选坐标);
+          3. 退到主终端里 OCR "先约电台" 文字入口。
         """
+        if self.touch.mapped_key('battle_pass'):
+            self.send_key('battle_pass', after_sleep=2)
+            if self._battle_pass_opened():
+                return True
         browser = self.is_browser()
-        positions = [(0.86, 0.05)] if not browser else [(0.86, 0.05), (0.90, 0.05), (0.95, 0.05)]
+        # 投屏手机端也没有 Alt: 别发 alt(那边既没这个键, 右上也压根不显示图标)
+        with_alt = not browser and not self.touch.is_phone_mirror
+        positions = ([(0.86, 0.05)] if with_alt
+                     else [(0.86, 0.05), (0.90, 0.05), (0.95, 0.05)])
         for x, y in positions:
-            if not browser:
+            if with_alt:
                 self.send_key_down('alt')
                 self.sleep(0.05)
             self.click_relative(x, y, after_sleep=1)
-            if not browser:
+            if with_alt:
                 self.send_key_up('alt')
             if self._battle_pass_opened():
                 return True

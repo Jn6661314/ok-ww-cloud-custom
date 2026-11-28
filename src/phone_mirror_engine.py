@@ -348,7 +348,7 @@ class SidecarEngine:
         pair: 启动时先配对。
     """
 
-    def __init__(self, data_dir=None, device='', max_size=1920, fps=30, bitrate=8_000_000,
+    def __init__(self, data_dir=None, device='', max_size=1920, fps=30, bitrate=800_000,
                  name='ok-ww', pair=False):
         self.data_dir = Path(data_dir) if data_dir else default_data_dir()
         self.device = device or ''

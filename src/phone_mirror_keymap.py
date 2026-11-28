@@ -19,6 +19,8 @@ MuMu 上脚本发 `send_key('e')` 是能生效的, 靠的不是 ok-ww: 是**模�
 ``f``(交互) 和 ``f_break``(斩杀/谐振破坏) 是手游里两个**不同**的按钮: 前者捡东西,
 后者是战斗中的谐振破坏提示。PC 上两者都按 F, 投屏下必须分开校准, 否则斩杀会
 把人拉去交互。``f2``(索拉指南) 同理, 投屏下可绑到用户自己指定的图标位置。
+``battle_pass``(先约电台) 是因为 PC 端"按住 Alt 才显示右上角图标"那套在手游上
+不存在, 只能由用户把手机上的入口位置点出来。
 """
 
 import json
@@ -44,6 +46,7 @@ CALIBRATION_KEYS = [
     ('f', '交互 F'),
     ('f_break', '斩杀 / 谐振破坏'),
     ('f2', '索拉指南 F2'),
+    ('battle_pass', '先约电台'),
     ('space', '跳跃'),
     ('y', '锁敌 Y'),
 ]
@@ -68,6 +71,13 @@ KEY_ALIASES = {
     'break': 'f_break',
     '斩杀': 'f_break',
     '谐振破坏': 'f_break',
+    # 先约电台(战令)。PC 上要按住 Alt 才会显示右上角图标, 手游没有 Alt,
+    # 只能由用户在手机上把那个入口点出来。
+    '先约电台': 'battle_pass',
+    'battlepass': 'battle_pass',
+    'battle-pass': 'battle_pass',
+    'bp': 'battle_pass',
+    '战令': 'battle_pass',
 }
 
 # 读盘的节流: 按键很频繁, 不能每次都读文件。
@@ -190,7 +200,8 @@ def save(mapping: dict) -> bool:
 def describe() -> str:
     """一行给人看的状态, 用日志里。"""
     mapping = load()
-    keys = [k for k in mapping if k in ('`', '1', '2', '3', 'e', 'r', 'f', 'f_break', 'f2', 'space', 'y')]
+    # 从 CALIBRATION_KEYS 取, 别再手写一份 —— 以前漏加新键, 日志里就看不到它。
+    keys = [key for key, _ in CALIBRATION_KEYS if key in mapping]
     return f'{len(keys)} 个键已映射: {" ".join(sorted(keys))}'
 
 

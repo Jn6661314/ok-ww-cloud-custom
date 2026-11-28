@@ -125,7 +125,7 @@ class Globals:
             engine.configure(device=str(option.get('手机', '')).strip(),
                              max_size=int(option.get('画面宽度', 1920) or 1920),
                              fps=int(option.get('帧率', 30) or 30),
-                             bitrate=int(option.get('码率', 8000000) or 8000000))
+                             bitrate=int(option.get('码率', 800000) or 800000))
             if not engine.running:
                 engine.start()
             setter = getattr(device_manager, 'set_phone_mirror_engine', None)
