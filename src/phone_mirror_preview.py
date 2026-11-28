@@ -13,27 +13,37 @@ from src.phone_mirror_pairing import _to_pixmap
 
 logger = Logger.get_logger(__name__)
 
-# 取帧间隔(毫秒), 30fps 足够看清运行情况, 也不会太吃 CPU。
-TICK_MS = 33
+# 检查新帧的间隔(毫秒)。16ms = 60fps 轮询一次, 但只在画面真的换了的时候才
+# 渲染 —— 以前 33ms 定时无脑重画, 最坏凭空多 33ms 延迟, 还白做一遍缩放。
+TICK_MS = 16
 
 # 窗口留着引用, 否则 Python 一回收窗口就闪没了。
 _windows = []
 
 
 def _attach(engine):
-    """新开一条画面连接; 连不上返回 None。"""
+    """拿到一条画面通道：优先复用任务正在用的那条，没有才自己开。
+
+    Returns:
+        (capture, owned)。owned=True 表示这条连接是本窗口开的，关窗时可以关掉；
+        任务接手后（adopted_by_task）也视为非本窗口所有。
+    """
     if engine is None or engine.port is None:
-        return None
+        return None, False
     try:
         from ok.device.capture_methods.phone_mirror_socket import PhoneMirrorSocketCaptureMethod
+        shared = PhoneMirrorSocketCaptureMethod.active_for_port(engine.port)
+        if shared is not None:
+            return shared, False
         capture = PhoneMirrorSocketCaptureMethod(engine.port)
         if not capture.start():
             capture.close()
-            return None
-        return capture
+            return None, False
+        capture.preview_owner = True
+        return capture, True
     except Exception as e:
         logger.debug(f'手机投屏: 预览连不上画面端口({e})')
-        return None
+        return None, False
 
 
 def _build_window_class():
@@ -48,6 +58,8 @@ def _build_window_class():
             super().__init__(parent)
             self.engine = engine
             self.capture = None
+            self.owns_capture = False
+            self.last_seq = -1
             self.setWindowTitle('手机投屏 · 画面')
             self.resize(720, 405)
 
@@ -86,10 +98,16 @@ def _build_window_class():
 
         def _tick(self):
             if self.capture is None:
-                self.capture = _attach(self.engine)
+                self.capture, self.owns_capture = _attach(self.engine)
                 if self.capture is None:
                     self.status.setText('还没连上投屏内核(先启动内核, 手机上点「允许」)')
                     return
+            # 任务接手了这条连接以后，窗口就不拥有它了。
+            if getattr(self.capture, 'adopted_by_task', False):
+                self.owns_capture = False
+            seq = getattr(self.capture, 'frame_seq', -1)
+            if seq == self.last_seq:
+                return
             frame = self.capture.do_get_frame()
             if frame is None:
                 self.status.setText('已连接投屏内核, 等画面…')
@@ -100,17 +118,18 @@ def _build_window_class():
                 return
             scale = min(box_w / width, box_h / height)
             target = (max(1, int(width * scale)), max(1, int(height * scale)))
-            pixmap = _to_pixmap(cv2.resize(frame, target))
+            pixmap = _to_pixmap(cv2.resize(frame, target, interpolation=cv2.INTER_AREA))
             if pixmap is None:
                 return
+            self.last_seq = seq
             self.image.setPixmap(pixmap)
             self.status.setText(f'{width}x{height}')
 
         def closeEvent(self, event):
             self.timer.stop()
-            if self.capture is not None:
+            if self.capture is not None and self.owns_capture:
                 self.capture.close()
-                self.capture = None
+            self.capture = None
             super().closeEvent(event)
 
     return PreviewWindow

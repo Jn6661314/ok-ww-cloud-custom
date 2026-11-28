@@ -23,6 +23,7 @@ import socket
 import struct
 import threading
 import time
+import weakref
 
 import cv2
 import numpy as np
@@ -84,8 +85,30 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
 
     name = 'PhoneMirrorSocket'
 
+    # 所有活着的实例。预览窗口和任务共用同一条 socket：以前预览自己再开一条
+    # 连接，内核要给两个客户端各拷贝一份全尺寸 NV12，两个 socket 各有一个
+    # 无界发送队列，任一客户端慢一点画面就会越积越滞后。共用之后只有一份画面。
+    _instances = weakref.WeakSet()
+
+    @classmethod
+    def active_for_port(cls, port):
+        """找一条已经连上、正在收同一端口画面的通道；没有返回 None。"""
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            return None
+        for capture in list(cls._instances):
+            if capture.port == port and capture.connected():
+                return capture
+        return None
+
     def __init__(self, port, exit_event=None, target_height=NORMALIZED_HEIGHT):
         super().__init__()
+        self.__class__._instances.add(self)
+        # 每收到一帧加一，预览窗口靠它判断"画面是不是新的"，避免重复渲染旧帧。
+        self.frame_seq = 0
+        # 被任务采纳后，预览窗口关闭时不能再把这条通道关掉。
+        self.adopted_by_task = False
         self.port = int(port)
         self.target_height = target_height
         self.exit_event = exit_event
@@ -155,6 +178,7 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         return f'PhoneMirrorSocket_{self.port}'
 
     def close(self):
+        self.__class__._instances.discard(self)
         self._running = False
         self._own_exit_event.set()
         sock = self._socket
@@ -278,6 +302,7 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         with self._frame_lock:
             self._raw = pixels
             self._raw_size = (width, height)
+            self.frame_seq += 1
         self._frame_ready.set()
 
     # ------------------------------------------------------------------

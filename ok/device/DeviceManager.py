@@ -1037,11 +1037,24 @@ class DeviceManager:
                 # 重建的那几十毫秒里 connected() 是 False, 框架会顺手把设备
                 # 判成"未连接"。
                 logger.info(f'手机投屏: 复用已连上的画面通道, 端口 {engine.port}')
+                old.adopted_by_task = True
                 if self.interaction:
                     self.interaction.capture = self.capture_method
                 return
             old.close()
+        # 预览窗口可能已经先开了同一条 socket。直接接手它，别再开第二条：
+        # 两条连接会让内核对每个客户端各拷一份全尺寸画面，还会各排一队，
+        # 任一客户端慢一点预览画面就会越来越滞后。
+        shared = PhoneMirrorSocketCaptureMethod.active_for_port(engine.port)
+        if shared is not None:
+            logger.info(f'手机投屏: 接手预览窗口已连上的画面通道, 端口 {engine.port}')
+            shared.adopted_by_task = True
+            self.capture_method = shared
+            if self.interaction:
+                self.interaction.capture = shared
+            return
         self.capture_method = PhoneMirrorSocketCaptureMethod(engine.port, exit_event=self.exit_event)
+        self.capture_method.adopted_by_task = True
         if not self.capture_method.start():
             # start() 已经等过首次连接; 到这儿还没连上, 说明回环端口不对或者内核刚退。
             logger.error(f'手机投屏: 连不上投屏内核的画面端口 {engine.port}')
