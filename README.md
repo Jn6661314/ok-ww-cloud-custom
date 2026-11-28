@@ -19,6 +19,10 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 按**日**汇总，完整改动明细见 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases)（中英双语）。
 
+### 2026-11-28
+
+- **[v1.8.27](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.27)** — **基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 第一次给「解压即用」的绿色成品包**：定制层从 v3.8.15 rebase 到 v3.8.18，上游新增的 `child_session` 与本地 `adb` 入口并存；7 条评审问题（锁敌重试要血条正向证据、跳过聚落仍找残象、无尽判定只认正则、云多账号配置隔离、`_replace_dir` 跨盘回滚、`_is_cloud_device` 回落 `config['preferred']`、`_run_cloud_account` 分开两种 None）全部修掉，Python 全量 **481 项通过**。绿色包 `ok-ww-custom-v1.8.27-full.7z` 用自建 134KB 轻量启动器直接跑内置 Python，**不碰 git**，解决官方 pyappify 启动器「一打开就把定制补丁还原」的问题；不含任何账号/Cookie/配置/日志。**同日追加**：手机投屏不再自动弹预览窗口，预览窗口也去掉实时画面、只保留连接状态（不再多占一条视频流）。需重跑 `restore.py` 并重启 ok-ww；或直接下载绿色包解压双击 `ok-ww.exe`。
+
 ### 2026-11-27
 
 - **[v1.8.26](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.26)** — **手机投屏：按键变触点（可校准的键位映射）+ 电脑上能看到手机画面**：投屏下 MuMu 那套按键失效，根因不是没做映射，而是**这层映射本来就不存在于真机**——MuMu 上是模拟器自带键位映射把真实键盘事件翻成触点；NectarLink 手机端收到按键只会当 **Android 按键事件**注入（`PhonePlatform.kt:295` → `Elevated.kt:1139` 的 `K <keycode>`），而鸣潮手游只认触点，协议层也没有任何消息能改对端键位（`phone.toggles` / `phone.toggle.set` 只管免打扰、铃声、手电筒这些）。于是把 MuMu 那份映射搬到 ok-ww 自己身上：新增 `src/phone_mirror_keymap.py`（`键 -> 屏幕比例坐标`，存 `configs/phone_mirror_keymap.json`，比例坐标与横竖屏/缩放/黑边无关），`PhoneMirrorInteraction.send_key()` 命中映射就发 `TOUCH_DOWN/UP` 触点、没命中才回退手机系统键；**返回/菜单的老问题**一并修掉——手游里返回和打开菜单是同一个按钮，发 `esc` 过去手机会当成 `KEYCODE_BACK` 弹「是否确定退出游戏」，现在 `TouchMode.is_touch` 把投屏也算触屏，`back()` / `open_menu()` 走键位表的 `` ` `` 翻成左上角一次点击（默认只给这一个键，因为位置固定；技能/切人的位置随手机分辨率和游戏内自定义布局而变，硬编码一套标准布局会点偏，而点偏比不点更糟）。新增**校准窗口**（配置 → 手机投屏 → 校准键位(点屏幕)）：左边列出菜单/返回、切人 1/2/3、技能 E、共鸣解放 R、交互 F、跳跃、锁敌 Y，选中后在右边投屏画面上点一下即绑定，自动跳到下一个键，点「保存」写盘。另新增**预览窗口** `src/phone_mirror_preview.py`：独立连一条到投屏内核的连接，实时显示手机画面（内核 `serve` 是循环 `accept`、每个连接单独推流，**不会抢任务那条连接**），可缩放、默认窗口置顶、底部显示真实分辨率；入口有两个——配置按钮「预览手机画面」（内核没跑会自动拉起），以及配置项「运行时显示画面」（默认开，任务启动时自动弹出）。新增 12 项测试，Python 全量 **477 项通过**；校准窗口与预览窗口都用真实内核开过并截图确认。**需重跑 `restore.py` 并重启 ok-ww**，然后**手机横屏进游戏**再校准（竖屏画面点出来的坐标对横屏无效）。

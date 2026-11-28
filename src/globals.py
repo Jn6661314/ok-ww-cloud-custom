@@ -134,43 +134,13 @@ class Globals:
                 return False
             setter(engine)
             self._relax_resolution_for_phone_mirror(device_manager)
-            self._schedule_phone_mirror_preview(option)
+            # 不再自动弹预览窗口: 投屏时只在后台跑内核, 需要看状态时手动点配置里的按钮。
             logger.info('手机投屏: 已启用(内置引擎), 画面来自内置投屏内核, '
                         '不需要安装 NectarLink 桌面端。')
             return True
         except Exception as e:
             logger.warning(f'apply phone mirror engine failed: {e}')
             return False
-
-    @staticmethod
-    def _schedule_phone_mirror_preview(option):
-        """给内置引擎开一个画面窗口, 方便看任务跑到哪一步。
-
-        内置引擎的设备是个"伪设备"(没有窗口), 不主动显示的话屏幕上什么都
-        看不见, 任务卡住只能猜。窗口单独连一条内核连接, 不影响任务那条。
-
-        延后两秒再开: 这时候 Qt 的事件循环一定起来了。更早创建 QWidget
-        会直接崩(不是抛异常, 兜不住)。
-        """
-        try:
-            if not option.get('运行时显示画面', True):
-                return
-        except Exception:
-            return
-
-        def open_it():
-            try:
-                from src.phone_mirror_engine import get_engine
-                from src.phone_mirror_preview import show_preview
-                show_preview(get_engine())
-            except Exception as e:
-                logger.debug(f'手机投屏: 打开预览窗口失败({e})')
-
-        try:
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(2000, open_it)
-        except Exception as e:
-            logger.debug(f'手机投屏: 排不进预览窗口({e})')
 
     @staticmethod
     def _relax_resolution_for_phone_mirror(device_manager):
