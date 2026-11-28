@@ -1815,9 +1815,9 @@ class BaseWWTask(BaseTask):
             self.reset_to_false('opening book')
         self.ensure_main()
         if self.touch.is_touch:
-            # 安卓触屏没有 F2 键: 一律点右上角"索拉指南"图标(方框书本)。
-            # 这里绝不能回落到 send_key('f2') —— 安卓端发 F2 什么也不会发生,
-            # 只会白等 wait_book 超时然后抛"make sure f2 is the hotkey for book"。
+            # 手机投屏若校准过 F2 触点, 走用户指定的位置; 否则/其它安卓端
+            # 一律点右上角"索拉指南"图标(方框书本)。绝不能无条件回落到
+            # send_key('f2') —— MuMu 发 F2 什么也不会发生, 只会白等超时。
             self.log_info(self.tr('click guidebook icon (touch) to open the book'))
             self.open_touch_book()
         else:
@@ -1854,11 +1854,17 @@ class BaseWWTask(BaseTask):
         书本来就开着时再点图标反而会把它关掉, 所以必须靠确认决定要不要补点。
         """
         deadline = time.time() + time_out
+        # 投屏下 F2 可以校准成任意自定义触点(不同手机/布局位置不一样);
+        # 没校准仍是右上角图标。MuMu 不读这张表, 行为完全不变。
+        mapped_f2 = self.touch.mapped_key('f2') if hasattr(self, 'touch') else None
         while True:
             if self.touch_book_opened():
                 self.log_debug('touch book opened')
                 return True
-            self.click_relative(*TOUCH_BOOK_CLICK, after_sleep=1)
+            if mapped_f2:
+                self.send_key('f2', after_sleep=1)
+            else:
+                self.click_relative(*TOUCH_BOOK_CLICK, after_sleep=1)
             if self.wait_until(self.touch_book_opened, time_out=4, settle_time=0.5,
                                raise_if_not_found=False):
                 self.log_debug('touch book opened')

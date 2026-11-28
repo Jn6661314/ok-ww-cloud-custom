@@ -53,17 +53,24 @@ class FakeCapture:
 
 
 class FakeTask:
-    """TouchMode 只用到 is_adb()、executor.interaction 和 send_key()。"""
+    """TouchMode 只用到 is_adb()、executor.interaction、send_key/click_relative。"""
 
     def __init__(self, interaction):
         self.executor = type('Executor', (), {'interaction': interaction})()
         self._interaction = interaction
+        self.sent_keys = []
+        self.clicked = []
 
     def is_adb(self):
         return True
 
     def send_key(self, key, after_sleep=0):
+        self.sent_keys.append(key)
         return self._interaction.send_key(key)
+
+    def click_relative(self, x, y, **kwargs):
+        self.clicked.append((x, y))
+        return True
 
 
 class KeymapTest(unittest.TestCase):
@@ -126,6 +133,28 @@ class KeymapTest(unittest.TestCase):
         keymap._cache['map'] = None
         self.assertIsNotNone(keymap.lookup('`'), '文件坏了也要退回默认表')
 
+    def test_f2_and_f_break_are_calibrated_independently(self):
+        # 三个都是手游里不同的按钮: 交互 F / 斩杀 / 索拉指南。
+        self.assertTrue(keymap.save({'f': (0.80, 0.65),
+                                     'f_break': (0.51, 0.42),
+                                     'f2': (0.73, 0.06)}))
+        self.assertEqual(keymap.lookup('f'), (0.80, 0.65))
+        self.assertEqual(keymap.lookup('f_break'), (0.51, 0.42))
+        self.assertEqual(keymap.lookup('f2'), (0.73, 0.06))
+        keys = dict(keymap.CALIBRATION_KEYS)
+        self.assertEqual(keys['f'], '交互 F')
+        self.assertIn('斩杀', keys['f_break'])
+        self.assertIn('F2', keys['f2'])
+
+    def test_break_aliases_never_overwrite_interact_f(self):
+        self.assertTrue(keymap.save({'f': (0.8, 0.65), '斩杀': (0.5, 0.4)}))
+        with open(keymap.keymap_path(), 'r', encoding='utf-8') as f:
+            saved = json.load(f)
+        self.assertNotIn('斩杀', saved)
+        self.assertEqual(keymap.lookup('f'), (0.8, 0.65))
+        self.assertEqual(keymap.lookup('f_break'), (0.5, 0.4))
+        self.assertEqual(keymap.lookup('fbreak'), (0.5, 0.4))
+
 
 class InteractionTest(unittest.TestCase):
 
@@ -166,8 +195,30 @@ class InteractionTest(unittest.TestCase):
     def test_a_key_with_neither_map_nor_code_is_reported_as_unhandled(self):
         self.assertFalse(self.interaction.send_key('f12', down_time=0.01))
 
+    def test_f_break_and_f2_are_separate_touches(self):
+        keymap.save({'f': (0.8, 0.65), 'f_break': (0.5, 0.4), 'f2': (0.7, 0.06)})
+        capture = FakeCapture()
+        interaction = PhoneMirrorInteraction(capture)
+        for key in ('f', 'f_break', 'f2'):
+            self.assertTrue(interaction.send_key(key, down_time=0.01))
+        taps = [t for t in capture.touches if t[0] == TOUCH_DOWN]
+        self.assertEqual([(t[1], t[2]) for t in taps],
+                         [(0.8, 0.65), (0.5, 0.4), (0.7, 0.06)])
+
 
 class TouchModeTest(unittest.TestCase):
+
+    def setUp(self):
+        path = keymap.keymap_path()
+        if os.path.exists(path):
+            os.remove(path)
+        keymap._cache['mtime'] = None
+        keymap._cache['map'] = None
+
+    def tearDown(self):
+        path = keymap.keymap_path()
+        if os.path.exists(path):
+            os.remove(path)
 
     def test_mirroring_counts_as_touch(self):
         # 投屏下 back() 必须走键位表的 `, 而不是 esc: 手游收到 esc 会弹
@@ -179,6 +230,81 @@ class TouchModeTest(unittest.TestCase):
         touch.back()
         self.assertEqual(len(capture.touches), 2)
         self.assertEqual(capture.keys, [])
+
+    def test_calibrated_f2_point_is_used_for_guidebook(self):
+        keymap.save({'f2': (0.31, 0.12)})
+        capture = FakeCapture()
+        task = FakeTask(PhoneMirrorInteraction(capture))
+        touch = TouchMode(task)
+        self.assertTrue(touch.is_phone_mirror)
+        self.assertTrue(touch.open_book())
+        self.assertEqual(task.sent_keys, ['f2'])
+        self.assertEqual(task.clicked, [], '校准后不该再点默认图标')
+        self.assertEqual([(t[1], t[2]) for t in capture.touches if t[0] == TOUCH_DOWN],
+                         [(0.31, 0.12)])
+
+    def test_uncalibrated_f2_keeps_the_default_icon(self):
+        capture = FakeCapture()
+        task = FakeTask(PhoneMirrorInteraction(capture))
+        touch = TouchMode(task)
+        self.assertIsNone(touch.mapped_key('f2'))
+        self.assertTrue(touch.open_book())
+        self.assertEqual(task.sent_keys, [])
+        self.assertEqual(len(task.clicked), 1)
+
+
+class BreakKeyTest(unittest.TestCase):
+    """斩杀与交互 F 必须独立: 斩杀点不能抢交互 F 的触点。"""
+
+    def setUp(self):
+        path = keymap.keymap_path()
+        if os.path.exists(path):
+            os.remove(path)
+        keymap._cache['mtime'] = None
+        keymap._cache['map'] = None
+
+    def tearDown(self):
+        path = keymap.keymap_path()
+        if os.path.exists(path):
+            os.remove(path)
+
+    def _fake_check(self, task):
+        fake = type('BreakCheck', (), {})()
+        fake.can_break = True
+        fake.touch = TouchMode(task)
+        fake.sent = []
+        fake.clicked = []
+        fake.check_f_break = lambda: False
+        fake.is_adb = lambda: True
+
+        def send_key(key, after_sleep=0):
+            fake.sent.append(key)
+            return task.send_key(key)
+
+        fake.send_key = send_key
+        fake.click = lambda *args, **kwargs: fake.clicked.append((args, kwargs))
+        return fake
+
+    def test_calibrated_break_point_is_used(self):
+        from src.combat.CombatCheck import CombatCheck
+        keymap.save({'f': (0.8, 0.65), 'f_break': (0.52, 0.44)})
+        capture = FakeCapture()
+        fake = self._fake_check(FakeTask(PhoneMirrorInteraction(capture)))
+        CombatCheck.f_break(fake)
+        self.assertTrue(fake.sent, '斩杀没有发出任何触点')
+        self.assertTrue(all(key == 'f_break' for key in fake.sent))
+        self.assertNotIn('f', fake.sent, '斩杀用了交互 F 的键')
+        self.assertEqual(fake.clicked, [])
+        self.assertEqual([(t[1], t[2]) for t in capture.touches if t[0] == TOUCH_DOWN][0],
+                         (0.52, 0.44))
+
+    def test_without_calibration_the_original_adb_path_stays(self):
+        from src.combat.CombatCheck import CombatCheck
+        fake = self._fake_check(FakeTask(PhoneMirrorInteraction(FakeCapture())))
+        fake._f_break_box = type('Box', (), {'center': lambda self: (0.6, 0.5)})()
+        CombatCheck.f_break(fake)
+        self.assertEqual(fake.sent, [], '没校准却发了语义键, PC/MuMu 会不认识')
+        self.assertTrue(fake.clicked, '没校准时应维持点提示位置的老逻辑')
 
 
 def tearDownModule():

@@ -15,6 +15,10 @@ MuMu 上脚本发 `send_key('e')` 是能生效的, 靠的不是 ok-ww: 是**模�
 
 表存在 ``configs/phone_mirror_keymap.json``, 由「校准键位」窗口点出来, 也可以
 自己改(格式 ``{"e": [0.80, 0.65]}``)。
+
+``f``(交互) 和 ``f_break``(斩杀/谐振破坏) 是手游里两个**不同**的按钮: 前者捡东西,
+后者是战斗中的谐振破坏提示。PC 上两者都按 F, 投屏下必须分开校准, 否则斩杀会
+把人拉去交互。``f2``(索拉指南) 同理, 投屏下可绑到用户自己指定的图标位置。
 """
 
 import json
@@ -38,6 +42,8 @@ CALIBRATION_KEYS = [
     ('e', '技能 E'),
     ('r', '共鸣解放 R'),
     ('f', '交互 F'),
+    ('f_break', '斩杀 / 谐振破坏'),
+    ('f2', '索拉指南 F2'),
     ('space', '跳跃'),
     ('y', '锁敌 Y'),
 ]
@@ -56,6 +62,12 @@ KEY_ALIASES = {
     'esc': '`',
     'escape': '`',
     'menu': '`',
+    # 斩杀键的几种常见写法都归到同一个点, 但绝不归到 'f'(交互) ——
+    # 用户明确要求两者独立。
+    'fbreak': 'f_break',
+    'break': 'f_break',
+    '斩杀': 'f_break',
+    '谐振破坏': 'f_break',
 }
 
 # 读盘的节流: 按键很频繁, 不能每次都读文件。
@@ -178,7 +190,7 @@ def save(mapping: dict) -> bool:
 def describe() -> str:
     """一行给人看的状态, 用日志里。"""
     mapping = load()
-    keys = [k for k in mapping if k in ('`', '1', '2', '3', 'e', 'r', 'f', 'space', 'y')]
+    keys = [k for k in mapping if k in ('`', '1', '2', '3', 'e', 'r', 'f', 'f_break', 'f2', 'space', 'y')]
     return f'{len(keys)} 个键已映射: {" ".join(sorted(keys))}'
 
 

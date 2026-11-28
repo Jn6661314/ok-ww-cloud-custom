@@ -5,6 +5,10 @@
 
 恢复前会自动把当前文件备份到一个带时间戳的目录，可随时回退。
 
+只覆盖下面 RELATIVE_FILES 列出的**代码文件**。账号 Cookie（cloud_profiles）、
+多账号配置与任务配置（configs）既不会被读取/上传，也不会被删除；部署前后会
+核对这些文件仍然在，少一个就立刻报错。
+
 用法::
 
     python restore.py                      # 恢复默认安装位置的 working + repo
@@ -31,6 +35,44 @@ FILES = HERE  # 本仓库根目录即"最终生效文件"目录
 # (改的是目录项, 不是文件内容), 所以先把旧文件挪走, 再把新的放上去。
 # 挪走的旧文件等那个进程自己退出后就没用了, 留着也不碍事。
 BUSY_SUFFIX = '.old'
+
+# 用户数据目录: 只记录路径做存在性校验, 绝不读文件内容(里面是登录态/Cookie)。
+USER_DATA_DIRS = ('configs', 'cloud_profiles')
+
+
+def snapshot_user_data(working: Path):
+    """记下部署前存在的用户数据文件和目录(只记路径, 不读内容)。"""
+    files, dirs = set(), set()
+    for name in USER_DATA_DIRS:
+        folder = working / name
+        if not folder.is_dir():
+            continue
+        dirs.add(name)
+        for path in folder.rglob('*'):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(working)
+            # workshop_cache 是随脚本部署的离线工坊数据, 不算用户数据。
+            if 'workshop_cache' in relative.parts:
+                continue
+            files.add(relative.as_posix())
+    return files, dirs
+
+
+def verify_user_data(working: Path, before) -> int:
+    """部署后核对用户数据没被删掉; 只比存在性, 不比 mtime(ok-ww 运行中会改)。"""
+    files, dirs = before
+    missing_dirs = sorted(name for name in dirs if not (working / name).is_dir())
+    missing_files = sorted(name for name in files if not (working / name).is_file())
+    if missing_dirs or missing_files:
+        print('[用户数据] 部署后以下文件/目录不见了:')
+        for name in missing_dirs + missing_files:
+            print(f'  - {name}')
+        print('请立刻去 custom-backup-before-restore-* 目录找回, 不要重跑本脚本。')
+        return 1
+    print(f'[用户数据] configs/ 与 cloud_profiles/ 的 {len(files)} 个文件、'
+          f'{len(dirs)} 个目录在部署前后都存在(未读取内容、未上传)')
+    return 0
 
 
 def copy_over(source: Path, target: Path, stamp: str) -> None:
@@ -439,6 +481,7 @@ def main(argv=None) -> int:
         return 1
 
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    user_data_before = snapshot_user_data(args.working)
     print(f'恢复时间戳: {stamp}')
     print(f'备份来源:   {FILES}')
     print('')
@@ -457,6 +500,8 @@ def main(argv=None) -> int:
         pin_version_tag_to_head(args.repo)
 
     verify_deploy(args.working, args.repo)
+    if verify_user_data(args.working, user_data_before):
+        return 1
 
     print('')
     print('恢复完成。启动 ok-ww 后按设备照常运行同一个「每日任务」即可：')

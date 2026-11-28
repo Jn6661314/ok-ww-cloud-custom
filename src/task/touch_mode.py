@@ -13,8 +13,9 @@
 集中到一处, 对外提供语义化入口:
   - is_touch / is_cloud : 当前设备模式判定
   - back() / open_menu(): 返回=打开菜单(同一个按钮, 触屏为键位表的 ` -> KEYCODE_GRAVE)
-  - open_book()         : 指南书(触屏直接点右上角索拉指南图标, 其余走按键 F2)
+  - open_book()         : 指南书(投屏可校准 F2 触点; 其余触屏点右上角图标; PC 走 F2)
   - open_activity()     : 活动面板(触屏直接点右上角活动图标, 其余走按键 F1)
+  - mapped_key()        : 投屏下某个语义键有没有自定义触点(f_break / f2)
 
 以后要调整触屏键位或某个操作的触屏手法, 只改这一处, 不用再翻遍每个 task。
 """
@@ -73,6 +74,33 @@ class TouchMode:
                 return False
 
     @property
+    def is_phone_mirror(self):
+        """当前输入是否来自手机投屏(内置引擎)的触点通道。
+
+        和 is_touch 的区别: MuMu/ADB 也走触屏语义, 但它有自己的键位映射, 不读
+        ``configs/phone_mirror_keymap.json``。只有投屏才用那张自定义表。
+        """
+        try:
+            from ok.device.interaction_methods.phone_mirror import PhoneMirrorInteraction
+            return isinstance(getattr(self.task.executor, 'interaction', None), PhoneMirrorInteraction)
+        except Exception:
+            return False
+
+    def mapped_key(self, key):
+        """投屏下这个键是否已校准成独立触点; 是则返回键名, 否则 None。
+
+        PC / MuMu 不认识 f_break 这种语义键, 调用方只在拿到非 None 时才改走它,
+        没校准就保持原来的按键/点击逻辑, 不破坏已有行为。
+        """
+        if not self.is_phone_mirror:
+            return None
+        try:
+            from src import phone_mirror_keymap as keymap
+            return key if keymap.lookup(key) is not None else None
+        except Exception:
+            return None
+
+    @property
     def is_cloud(self):
         """当前是否为云游戏浏览器设备。"""
         try:
@@ -92,9 +120,12 @@ class TouchMode:
         self.back(after_sleep=after_sleep)
 
     def open_book(self, after_sleep=4):
-        """打开索拉指南。触屏直接点右上角图标栏的指南按钮(用户标注红框位置);
-        非触屏返回 False, 由调用方走按键(key_config / F2)。"""
+        """打开索拉指南。投屏优先点用户校准的 F2 触点; 没校准仍点右上角图标栏
+        的指南按钮; 非触屏返回 False, 由调用方走按键(key_config / F2)。"""
         if self.is_touch:
+            if self.mapped_key('f2'):
+                self.task.send_key('f2', after_sleep=after_sleep)
+                return True
             self.task.click_relative(*TOUCH_BOOK_CLICK, after_sleep=after_sleep)
             return True
         return False

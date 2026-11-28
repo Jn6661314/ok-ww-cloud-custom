@@ -198,8 +198,15 @@ class CombatCheck(BaseWWTask):
     def f_break(self):
         if self.can_break or self.check_f_break():
             start = time.time()
+            # 手机投屏: 斩杀/谐振破坏与交互 F 是两个不同的按钮, 可以独立校准。
+            # 只在投屏且用户点过这个键时才改走 f_break 触点; 没校准/PC/MuMu
+            # 全部保持原来的逻辑(点识别到的提示位置 / 按 F)。
+            touch = getattr(self, 'touch', None)
+            mapped_break = touch.mapped_key('f_break') if touch is not None else None
             while time.time() - start < 0.5 or (time.time() - start < 5 and (self.can_break or self.check_f_break())):
-                if self.is_adb():
+                if mapped_break:
+                    self.send_key(mapped_break, after_sleep=0.1)
+                elif self.is_adb():
                     box = getattr(self, '_f_break_box', None)
                     if box is not None:
                         # 手游端必须点击提示图标/文字本身, 按 F 键(或键位映射)没有谐振破坏
