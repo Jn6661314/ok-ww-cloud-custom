@@ -24,6 +24,11 @@ from ok.util.window import windows_graphics_available, find_hwnd
 
 logger = Logger.get_logger(__name__)
 
+# v3.8.18 框架新增的「子会话」抓屏/交互名(app config 'child_session')。
+# 我们基于旧版打的补丁里缺这个常量和两个方法, 框架在 start_controller /
+# child_session_tab 里会直接调用, 缺了就抛 AttributeError(连任务都起不来)。
+CHILD_SESSION = 'ChildSession'
+
 # 手机投屏抓屏适配层(裁工具条/黑边 + 归一化分辨率 + 坐标换算)。
 # 这个模块是我们新增的文件, 旧版本 ok-ww 里没有, 导入失败时退化成普通抓屏。
 try:
@@ -108,6 +113,10 @@ class DeviceManager:
         self.windows_capture_config = app_config.get('windows')
         self.adb_capture_config = app_config.get('adb')
         self.browser_config = app_config.get('browser')
+        # v3.8.18 框架的 child session: 配置存在就建占位, 方法见下方。
+        # 手机投屏/云游戏/模拟器都不用子会话, uses_child_session() 会返回 False。
+        self.child_session_config = app_config.get('child_session') if app_config.get('windows') else None
+        self._child_session_client = None
         self.debug = app_config.get('debug')
         self.interaction = None
         self.device_dict = {}
@@ -823,6 +832,29 @@ class DeviceManager:
                     return None
             except Exception as e:
                 logger.error('adb_ui_dump exception', e)
+
+    def child_session_client(self):
+        """v3.8.18 框架要的 agent client; 只有当真用了子会话时才会创建。"""
+        if self._child_session_client is None:
+            from ok.child_session.client import AgentClient
+            from ok.child_session.host import project_dir
+            self._child_session_client = AgentClient(project_dir())
+        return self._child_session_client
+
+    def uses_child_session(self):
+        """是否走子会话。
+
+        我们的定制分支主推手机投屏 / 云游戏 / MuMu, 都不用子会话。
+        就算配置里留着官方的 'child_session' 项、设备也是 windows,
+        只要抓屏方式不是 ChildSession 就返回 False, 免得 start_device
+        误进 _start_child_session 分支(那条路对投屏伪设备是死路)。
+        """
+        if getattr(self, 'phone_mirror_mode', False) or getattr(self, 'phone_mirror_engine_mode', False):
+            return False
+        preferred = self.get_preferred_device()
+        return (bool(getattr(self, 'child_session_config', None)) and preferred is not None
+                and preferred.get('device') == 'windows'
+                and self.config.get('capture') == CHILD_SESSION)
 
     def get_preferred_device(self):
         imei = self.config.get("preferred")
