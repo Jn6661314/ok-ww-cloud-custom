@@ -63,6 +63,25 @@ DIALOG_BRIGHT_MIN = 0.5
 # 整帧判定为"黑屏/无效帧"的亮度上限
 BLACK_FRAME_MAX = 8
 
+# --- 手机投屏(内置引擎)专用判据 -------------------------------------------------
+# 上面那套 ROI 是 1920x1080 基准、按宽高独立缩放的。手机投屏画面是 2376x1080
+# (2.2:1), 手游横屏 UI 的布局和 PC 不是等比关系 —— 实测小地图实际在 x 186..383,
+# 而 RADAR_BOX 换算后只到 x 247, 黄色箭头正好被框在外面。结果是:
+#   大世界 -> radar_yellow=0, ult_orange=0, party_white=377(<600)
+#   -> in_android_world 恒 False -> in_team 恒 False -> is_main 恒 False
+#   -> ensure_main 每 2 秒点一次「返回」, 表现为"一直在按返回菜单"。
+# 所以投屏单独用一组相对区域(按投屏实帧标定), 判据取"白像素占比":
+#   区域        大世界    指南书面板
+#   左上小地图   0.011     0.269      <- 区分度最高(面板是浅色内容区)
+#   右下技能栏   0.039     0.417
+#   底部 HUD     0.035     0.062      <- 下限用来排除纯深色画面(登录/过场)
+PM_RADAR_BOX = (0.0715, 0.0556, 0.1684, 0.2500)
+PM_SKILL_BOX = (0.6902, 0.5463, 0.9301, 0.9722)
+PM_HUD_BOX = (0.3620, 0.8704, 0.5976, 0.9352)
+PM_RADAR_WHITE_MAX = 0.10
+PM_SKILL_WHITE_MAX = 0.15
+PM_HUD_WHITE_MIN = 0.010
+
 
 def _scale_box(box, width, height, base_width=1920, base_height=1080):
     """把 1920x1080 基准坐标换算到当前帧尺寸。"""
@@ -97,6 +116,21 @@ def _count_white(frame, box):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, WHITE_LO, WHITE_HI)
     return int(np.count_nonzero(mask))
+
+
+def _white_ratio(frame, box):
+    """相对坐标(0..1)区域内的白色像素占比。"""
+    if frame is None or frame.size == 0:
+        return 0.0
+    height, width = frame.shape[:2]
+    x1, y1 = int(box[0] * width), int(box[1] * height)
+    x2, y2 = int(box[2] * width), int(box[3] * height)
+    roi = frame[max(0, y1):min(height, y2), max(0, x1):min(width, x2)]
+    if roi.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, WHITE_LO, WHITE_HI)
+    return float(np.count_nonzero(mask)) / mask.size
 
 
 def _longest_run(row_mask):
@@ -157,8 +191,12 @@ def has_center_dialog(frame):
     return ratio >= DIALOG_BRIGHT_MIN, ratio
 
 
-def detect_world_signals(frame):
-    """返回安卓端各判据的原始像素统计, 便于日志与排查。"""
+def detect_world_signals(frame, phone_mirror=False):
+    """返回安卓端各判据的原始像素统计, 便于日志与排查。
+
+    ``phone_mirror=True`` 时改用投屏专用的相对区域(见 PM_* 常量), 因为投屏
+    画面是 2.2:1 超宽, 1920x1080 基准的 ROI 会整个偏掉。
+    """
     if frame is None or frame.size == 0:
         return {
             'radar_yellow': 0,
@@ -167,6 +205,14 @@ def detect_world_signals(frame):
             'party_white': 0,
             'loading_bar': 0,
             'black': True,
+        }
+    if phone_mirror:
+        return {
+            'pm_radar': _white_ratio(frame, PM_RADAR_BOX),
+            'pm_skill': _white_ratio(frame, PM_SKILL_BOX),
+            'pm_hud': _white_ratio(frame, PM_HUD_BOX),
+            'loading_bar': _loading_bar_length(frame),
+            'black': is_black_frame(frame),
         }
     return {
         'radar_yellow': _count_hsv(frame, RADAR_BOX, YELLOW_LO, YELLOW_HI),
@@ -178,19 +224,33 @@ def detect_world_signals(frame):
     }
 
 
-def in_android_world(frame):
+def in_android_world(frame, phone_mirror=False):
     """安卓端"是否已在大世界"判定。
 
     返回 (是否在大世界, 判据说明)。判据说明用于日志, 直接给出是哪一项
     命中/未命中, 便于用户自查画面。
+
+    ``phone_mirror=True`` 走投屏专用判据: 三个区域的白像素占比。大世界是
+    "小地图/技能栏都偏暗 + 底部有 HUD", 而指南书面板是小地图/技能栏位置被
+    浅色内容面板占满 —— 两者差 10~24 倍, 比原来按 1920 基准的 ROI 稳得多。
     """
-    signals = detect_world_signals(frame)
+    signals = detect_world_signals(frame, phone_mirror=phone_mirror)
     if signals['black']:
         return False, 'black_frame'
 
     # 加载界面优先排除: 底部有贯穿全屏的加载进度条
     if signals['loading_bar'] >= LOADING_BAR_MIN:
         return False, f"loading_screen(loading_bar={signals['loading_bar']})"
+
+    if phone_mirror:
+        detail = (f"pm_radar={signals['pm_radar']:.3f}, "
+                  f"pm_skill={signals['pm_skill']:.3f}, "
+                  f"pm_hud={signals['pm_hud']:.3f}")
+        if (signals['pm_radar'] < PM_RADAR_WHITE_MAX
+                and signals['pm_skill'] < PM_SKILL_WHITE_MAX
+                and signals['pm_hud'] >= PM_HUD_WHITE_MIN):
+            return True, detail
+        return False, f'not_world({detail})'
 
     if signals['radar_yellow'] >= RADAR_YELLOW_MIN:
         return True, f"radar_yellow={signals['radar_yellow']}"

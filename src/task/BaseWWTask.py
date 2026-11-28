@@ -1697,7 +1697,9 @@ class BaseWWTask(BaseTask):
             self.log_debug('in_team(android): no frame available')
             return False, -1, 1
 
-        in_world, reason = android_world.in_android_world(frame)
+        in_world, reason = android_world.in_android_world(
+            frame, phone_mirror=bool(getattr(getattr(self, 'touch', None),
+                                             'is_phone_mirror', False)))
         if not in_world:
             if reason == 'black_frame':
                 # MuMu 的 IPC 截图偶尔返回纯黑图, 此时任何模板匹配都不会命中,

@@ -20,9 +20,18 @@
 以后要调整触屏键位或某个操作的触屏手法, 只改这一处, 不用再翻遍每个 task。
 """
 
+import time
+
 # 触屏语义键位(统一在 ADB_KEY_MAP 里映射成合法 KEYCODE_*)。
 # 键位表: [ ` ] = 菜单/跳过; 触屏的返回与打开菜单是同一个按钮, 就是它。
 TOUCH_MENU_BACK_KEY = '`'  # -> ADB_KEY_MAP -> KEYCODE_GRAVE (返回 = 打开菜单 = 菜单/跳过键)
+
+# 投屏下 back 的"刹车": 手游没有稳定的返回键, back 点的是右上角(面板里是 X,
+# 大世界里是设置/头像)。一旦"是否在大世界"判错, ensure_main 会每 2 秒点一次,
+# 表现为"一直在按返回菜单", 而且点开的面板会层层叠加。这里限制窗口内的次数,
+# 超出就停止发触点并告警, 让上层超时报错, 而不是无限乱点。
+BACK_STORM_WINDOW = 10.0
+BACK_STORM_LIMIT = 5
 
 # ---------------------------------------------------------------------------
 # 右上角图标栏(1920x1080 基准)。实测大世界右上角有 6 个图标, 从左到右:
@@ -46,6 +55,8 @@ class TouchMode:
 
     def __init__(self, task):
         self.task = task
+        self._back_times = []
+        self._back_storm_warned = False
 
     @property
     def is_touch(self):
@@ -115,9 +126,26 @@ class TouchMode:
     def back(self, after_sleep=0):
         """返回/关闭一层。触屏用键位表的菜单/跳过键 `; PC/云维持原 back()(esc)。"""
         if self.is_touch:
+            if self.is_phone_mirror and not self._back_allowed():
+                return False
             self.task.send_key(TOUCH_MENU_BACK_KEY, after_sleep=after_sleep)
         else:
             self.task.back(after_sleep=after_sleep)
+
+    def _back_allowed(self):
+        """投屏下 back 的节流: 窗口内超过上限就拦下(见 BACK_STORM_* 注释)。"""
+        now = time.time()
+        self._back_times = [t for t in self._back_times if now - t < BACK_STORM_WINDOW]
+        if len(self._back_times) >= BACK_STORM_LIMIT:
+            if not self._back_storm_warned:
+                self._back_storm_warned = True
+                log = getattr(self.task, 'log_warning', None)
+                if log:
+                    log(self.task.tr(
+                        '投屏下连续返回无效, 已暂停点击; 请确认游戏画面已回到大世界'))
+            return False
+        self._back_times.append(now)
+        return True
 
     def open_menu(self, after_sleep=0):
         """打开/切换系统菜单。安卓端与返回是同一个按钮(键位表的 `)。"""
