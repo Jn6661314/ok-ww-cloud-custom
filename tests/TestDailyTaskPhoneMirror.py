@@ -35,6 +35,13 @@ class DailyPointsTest(unittest.TestCase):
         self.assertIsNone(ANDROID_DAILY_POINTS_FREE_RE.match('80/240'))
         # 480 这类超出活跃度上限的数字靠代码里的 <= 200 过滤。
 
+    def test_task_row_progress_is_never_read_as_activity(self):
+        """页面上有 4 个任务行显示 "0/1"; 分母限定 100/200 才不会读成活跃度 0。"""
+        self.assertIsNone(ANDROID_DAILY_POINTS_RE.search('0/1'))
+        self.assertIsNone(ANDROID_DAILY_POINTS_RE.search('0/5'))
+        self.assertEqual(ANDROID_DAILY_POINTS_RE.search('60/100').group(1), '60')
+        self.assertEqual(ANDROID_DAILY_POINTS_RE.search('120／200').group(1), '120')
+
     def _fake_task(self, anchors, fractions, free):
         seen = []
 
