@@ -78,7 +78,8 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 > **不想折腾？** 从 [Releases](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/latest)
 > 下载 `ok-ww-custom-vX.Y.Z-full.7z`（绿色包，含 Python 环境与官方 v3.8.18 全部文件），
 > 解压到任意文件夹后双击 `ok-ww.exe` 即可：不用装 Python、不用跑 `restore.py`、不用 AI、
-> 也不用安装或写注册表。
+> 也不用安装或写注册表。包里是**自建的轻量启动器**（不碰 git），不会像官方启动器那样
+> 一启动就把定制补丁还原掉。
 > 成品包不含任何人的配置、账号、Cookie、云存档与日志。
 
 ## 上游与授权（重要）
