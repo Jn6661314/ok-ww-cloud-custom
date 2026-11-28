@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 WORK = os.environ.get('OKWW_WORK', r"C:/Users/Jn/AppData/Local/ok-ww/data/apps/ok-ww/working")
@@ -322,6 +323,70 @@ class TestModeSwitch(unittest.TestCase):
         first = engine.process.pid
         self.assertTrue(engine.start())
         self.assertEqual(engine.process.pid, first)
+
+
+class TestEngineExitWithOkww(unittest.TestCase):
+    """关掉 ok-ww 后投屏内核不能还在后台跑。
+
+    正常退出靠 atexit 调 stop_engine(); 强杀/崩溃靠 Windows Job Object。
+    配置里还要有「停止投屏内核」按钮, 让用户不用退 ok-ww 就能关投屏。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.script = Path(self.tmp.name) / 'fake_sidecar.py'
+        self.script.write_text(FAKE_SIDECAR, encoding='utf-8')
+        self.addCleanup(self.tmp.cleanup)
+
+    def _engine(self):
+        return FakeEngine(str(self.script), 'waiting', data_dir=self.tmp.name)
+
+    def test_normal_exit_registers_the_cleanup_hook(self):
+        src = Path(phone_mirror_engine.__file__).read_text(encoding='utf-8')
+        self.assertIn('atexit.register(stop_engine)', src,
+                      '没注册退出钩子, 关窗口后内核会残留')
+
+    def test_start_binds_the_engine_to_our_exit_group(self):
+        engine = self._engine()
+        # 假句柄只是个标记, 万一断言失败, 清理时也不能拿它去 CloseHandle。
+        job = object()
+        self.addCleanup(lambda: (setattr(engine, '_job', None), engine.stop()))
+        with unittest.mock.patch.object(phone_mirror_engine,
+                                        'bind_process_to_current_job', return_value=job) as bind:
+            self.assertTrue(engine.start())
+        bind.assert_called_once()
+        self.assertIs(engine._job, job)
+        with unittest.mock.patch.object(phone_mirror_engine, 'close_process_job') as close:
+            engine.stop()
+        close.assert_called_once_with(job)
+        self.assertIsNone(engine._job)
+
+    def test_a_failed_binding_does_not_stop_the_engine_from_starting(self):
+        # 老系统/权限不够时绑不上 job, 但不能因此就不让投屏。
+        engine = self._engine()
+        with unittest.mock.patch.object(phone_mirror_engine,
+                                        'bind_process_to_current_job', return_value=None):
+            self.assertTrue(engine.start())
+        self.addCleanup(engine.stop)
+        self.assertIsNone(engine._job)
+        self.assertIsNotNone(engine.process)
+
+    def test_stop_engine_kills_the_shared_engine(self):
+        engine = self._engine()
+        with unittest.mock.patch.object(phone_mirror_engine, '_engine', engine):
+            self.assertTrue(engine.start())
+            pid = engine.process.pid
+            phone_mirror_engine.stop_engine()
+            self.assertIsNone(phone_mirror_engine._engine, '全局引用没清掉')
+        self.assertIsNone(engine.process)
+        self.assertFalse(phone_mirror_engine.pid_alive(pid), '内核进程还活着')
+
+    def test_the_config_has_a_stop_button(self):
+        # 静态检查: 不动 config 模块(导入它有迁移配置等副作用)。
+        config_src = Path(WORK, 'config.py').read_text(encoding='utf-8')
+        self.assertIn("'停止投屏内核'", config_src)
+        self.assertIn('_stop_phone_mirror_engine', config_src)
+        self.assertIn('stop_engine()', config_src)
 
 
 class TestRealSidecar(unittest.TestCase):

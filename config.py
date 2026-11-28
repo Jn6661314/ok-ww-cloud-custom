@@ -62,6 +62,22 @@ def _start_phone_mirror_engine():
     return False
 
 
+def _stop_phone_mirror_engine():
+    """「停止投屏内核」按钮: 彻底关掉投屏(内核进程一起退出)。
+
+    以前没有这个按钮: 投屏一开就没地方关, 只能退 ok-ww, 而退 ok-ww 也不会
+    停内核 —— 于是内核一直在后台占着端口、手机端也一直显示投屏中。
+    """
+    try:
+        from src.phone_mirror_engine import stop_engine
+    except Exception as e:
+        logger.error(f'手机投屏: 停止内核失败({e})')
+        return False
+    stop_engine()
+    logger.info('手机投屏: 内核已停止, 投屏已关闭(再投屏需点「启动投屏内核」或重启 ok-ww)。')
+    return True
+
+
 def _open_phone_mirror_keymap():
     """「校准键位」按钮: 在投屏画面上点一下, 把这个位置绑到某个键。
 
@@ -319,6 +335,7 @@ phone_mirror_option = ConfigOption('手机投屏', {
     '码率': '8000000',
     '配对手机': '',
     '启动投屏内核': '',
+    '停止投屏内核': '',
     '校准键位': '',
     '预览画面': '',
     '下载手机端': '',
@@ -331,11 +348,13 @@ phone_mirror_option = ConfigOption('手机投屏', {
               '步骤: 1) 手机装好下面的 NectarLink 客户端; '
               '2) 内置引擎模式点「配对手机」让手机扫码; '
               '3) 开启本选项并重启 ok-ww, 设备下拉里选「手机投屏」。'
-              '注意: 每次重新投屏都要在手机上点「允许」, 所以别反复重启 ok-ww。'
+              '注意: 投屏跟 ok-ww 一起退出, 关掉 ok-ww 后不会残留内核; '
+              '下次再开需要在手机上重新点「允许」(Android 规定)。'
               '注意: 配置名不要带 "/", 否则框架会当成目录。',
    config_type={
        '配对手机': {'type': 'button', 'text': '配对手机(扫码)', 'callback': _open_phone_mirror_pairing},
        '启动投屏内核': {'type': 'button', 'text': '启动投屏内核', 'callback': _start_phone_mirror_engine},
+       '停止投屏内核': {'type': 'button', 'text': '停止投屏内核(关闭投屏)', 'callback': _stop_phone_mirror_engine},
        '校准键位': {'type': 'button', 'text': '校准键位(点屏幕)', 'callback': _open_phone_mirror_keymap},
        '预览画面': {'type': 'button', 'text': '预览手机画面', 'callback': _open_phone_mirror_preview},
        '下载手机端': {'type': 'button', 'text': '下载手机端(网盘)', 'callback': _open_phone_mirror_apk},
@@ -353,6 +372,8 @@ phone_mirror_option = ConfigOption('手机投屏', {
        '码率': '内置引擎模式: 向手机请求的视频码率(bps)。8000000 = 8 Mbps',
        '配对手机': '打开配对窗口, 手机用 NectarLink 客户端扫码即可配对(只需一次)',
        '启动投屏内核': '立刻把投屏内核跑起来; 手机上点「允许」后就能出画面',
+       '停止投屏内核': '彻底关掉投屏: 内核进程退出, 手机端不再显示投屏中; '
+                       '关闭 ok-ww 时也会自动停(不需要点这个按钮)',
        '校准键位': '打开投屏画面, 逐个点一下「菜单/返回」「切人 1/2/3」「技能 E」等按钮的位置, '
                    'ok-ww 就学会把这些键变成手机触点。手游不认按键事件, 不做这一步'
                    '只有「菜单/返回」能用(位置固定), 技能/切人都会没反应',

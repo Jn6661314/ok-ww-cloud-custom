@@ -8,15 +8,19 @@ ok-ww 不再依赖外部安装的 NectarLink 桌面端, 而是自己拉起一个
     ok-ww; ok-ww 的点击/按键再通过同一个 socket 回传给手机;
   * 画面比例、分辨率、码率都由 ok-ww 自己决定, 不再受桌面端窗口尺寸影响。
 
-sidecar 进程可以跨多次运行保持存活(每次重新投屏都要在手机上点「允许」,
-所以尽量别反复重启它)。引擎把端口写在 ``<数据目录>/link.json`` 里, 下次
-ok-ww 启动时先试着连上还在跑的引擎。
-
-同一个数据目录**只能有一个**内核: 设备身份存在那个目录里, 两个内核用同一个
-身份在局域网里互相广播时, 手机会拿到对不上的地址, 然后报「设备离线」。
-所以这里每次启动前都会先把上次留下的内核清掉。
+内核跟着 ok-ww 走: ok-ww 退出(包括被强杀)时内核必须一起结束。以前故意让
+它跨进程常驻(省得每次重新投屏都要在手机上点「允许」), 结果关掉 ok-ww 后
+内核还在后台占着端口, 下次配对会误复用旧内核(没有二维码), 手机端也会因为
+两个内核抢同一个设备身份而显示「电脑离线」。现在用两道保险:
+  * 正常退出: atexit 调 stop_engine() 干净地停掉内核;
+  * 强杀/崩溃: Windows Job Object 的 KILL_ON_JOB_CLOSE, 由系统在最后一个
+    job 句柄关闭时把内核一起结束。
+同一个 ok-ww 进程里仍然复用同一个内核(配置界面/启动流程/任务共用), 不会
+因为开个预览窗口就重新连接手机。
 """
 
+import atexit
+import ctypes
 import json
 import os
 import re
@@ -159,6 +163,102 @@ def kill_pid(pid) -> bool:
     return not pid_alive(pid)
 
 
+# ------------------------------------------------------------------
+# 跟着 ok-ww 一起退出
+# ------------------------------------------------------------------
+# atexit 只能覆盖正常退出; 任务管理器结束进程 / 崩溃时它不会跑。Windows 的
+# Job Object 设了 KILL_ON_JOB_CLOSE 之后, 只要持有 job 句柄的进程(ok-ww)消失,
+# 系统就把 job 里的所有进程(内核)一起结束 —— 这是防残留真正靠得住的一层。
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_ulonglong) for name in (
+        'ReadOperationCount', 'WriteOperationCount', 'OtherOperationCount',
+        'ReadTransferCount', 'WriteTransferCount', 'OtherTransferCount')]
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ('PerProcessUserTimeLimit', ctypes.c_longlong),
+        ('PerJobUserTimeLimit', ctypes.c_longlong),
+        ('LimitFlags', ctypes.c_ulong),
+        ('MinimumWorkingSetSize', ctypes.c_size_t),
+        ('MaximumWorkingSetSize', ctypes.c_size_t),
+        ('ActiveProcessLimit', ctypes.c_ulong),
+        ('Affinity', ctypes.c_void_p),
+        ('PriorityClass', ctypes.c_ulong),
+        ('SchedulingClass', ctypes.c_ulong),
+    ]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ('BasicLimitInformation', _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ('IoInfo', _IO_COUNTERS),
+        ('ProcessMemoryLimit', ctypes.c_size_t),
+        ('JobMemoryLimit', ctypes.c_size_t),
+        ('PeakProcessMemoryUsed', ctypes.c_size_t),
+        ('PeakJobMemoryUsed', ctypes.c_size_t),
+    ]
+
+
+def bind_process_to_current_job(process):
+    """把内核绑到"ok-ww 关闭即终止"的 job; 失败返回 None, 不影响内核启动。"""
+    if not sys.platform.startswith('win'):
+        return None
+    job = None
+    try:
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            raise ctypes.WinError(ctypes.get_last_error())
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        kernel32.SetInformationJobObject.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
+        if not kernel32.SetInformationJobObject(
+                job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        # 内核可能以管理员权限启动, 这里只要求设置配额和结束它所需的权限。
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        handle = kernel32.OpenProcess(0x0100 | 0x0001, False, process.pid)  # SET_QUOTA|TERMINATE
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        try:
+            if not kernel32.AssignProcessToJobObject(job, handle):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            kernel32.CloseHandle(handle)
+        logger.debug(f'手机投屏: 内核(pid {process.pid})已绑定到 ok-ww 的退出组')
+        return job
+    except Exception as e:
+        # 老系统/受限权限/进程已在别的 job 里都可能失败; 还有 atexit 兜底。
+        logger.debug(f'手机投屏: 绑定内核退出组失败({e}), 靠退出钩子清理')
+        if job:
+            try:
+                ctypes.WinDLL('kernel32', use_last_error=True).CloseHandle(job)
+            except Exception:
+                pass
+        return None
+
+
+def close_process_job(job):
+    """关掉 job 句柄。里面还有内核的话, 系统会把它一起结束。"""
+    if not job or not sys.platform.startswith('win'):
+        return
+    try:
+        ctypes.WinDLL('kernel32', use_last_error=True).CloseHandle(job)
+    except Exception:
+        pass
+
+
 def _parse_status_lines(line):
     """从一行输出里取出状态消息(每条一个 JSON 对象)。
 
@@ -258,6 +358,8 @@ class SidecarEngine:
         self.name = name
         self.pair = pair
         self.process = None
+        # Windows Job Object 句柄: ok-ww 消失时系统会据此结束内核。
+        self._job = None
         self.port = None
         self.status = {}
         self.status_message = ''
@@ -504,6 +606,9 @@ class SidecarEngine:
                 self.last_error = str(e)
                 logger.error(f'手机投屏: 投屏内核启动失败({e})')
                 return False
+            # ok-ww 关掉(包括被强杀)时内核必须一起退出, 否则残留进程占着端口,
+            # 下次配对误复用旧内核、手机端也会看到"电脑离线"。
+            self._job = bind_process_to_current_job(self.process)
             self._mode = 'pair' if self.pair else 'plain'
             self._stderr.clear()
             self.reconnect_off = False
@@ -544,7 +649,11 @@ class SidecarEngine:
         self.port = None
         self._ready.clear()
         self._mode = None
+        # 先结束内核, 再关 job 句柄 —— 免得关句柄时系统再杀一次。
+        job = self._job
+        self._job = None
         if process is None:
+            close_process_job(job)
             return
         try:
             process.terminate()
@@ -561,6 +670,7 @@ class SidecarEngine:
                     stream.close()
             except Exception:
                 pass
+        close_process_job(job)
         logger.info('手机投屏: 投屏内核已停止')
 
     # ------------------------------------------------------------------
@@ -706,3 +816,8 @@ def stop_engine():
         if _engine is not None:
             _engine.stop()
             _engine = None
+
+
+# ok-ww 正常退出(关窗口、Ctrl+C、sys.exit)时把内核一起收掉。强杀/崩溃走上面的
+# Job Object, 两条路合起来才不会有"程序关了投屏还在跑"的残留进程。
+atexit.register(stop_engine)
