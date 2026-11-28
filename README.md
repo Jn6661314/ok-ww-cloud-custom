@@ -21,7 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 | 版本 | 摘要 |
 | --- | --- |
-| [v1.8.30](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.30) | 手机投屏修「点开始没反应」与画面越来越卡；新增斩杀/索拉指南/先约电台触点；修活跃度读不到、反复按返回、「书开着却找不到列表」；默认码率 8M → 0.8M |
+| [v1.8.30](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.30) | **附解压即用成品包**。手机投屏修「点开始没反应」与画面越来越卡；新增斩杀/索拉指南/先约电台触点；修活跃度读不到、反复按返回、「书开着却找不到列表」；默认码率 8M → 0.8M |
 | [v1.8.29](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.29) | 关掉 ok-ww 后投屏内核不再残留（atexit + Job Object），配置里新增「停止投屏内核」按钮；测试口径纠正为 486 项 |
 | [v1.8.28](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.28) | 配对不再误复用残留内核、补回 `child_session` 方法、云游戏默认分辨率改 1600×900（Win10 闪退）；精简本文档与安装提示词 |
 | [v1.8.27](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.27) | 基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 首个「解压即用」绿色成品包 |
