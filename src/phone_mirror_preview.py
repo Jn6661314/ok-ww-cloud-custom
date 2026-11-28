@@ -118,7 +118,9 @@ def _build_window_class():
                 return
             scale = min(box_w / width, box_h / height)
             target = (max(1, int(width * scale)), max(1, int(height * scale)))
-            pixmap = _to_pixmap(cv2.resize(frame, target, interpolation=cv2.INTER_AREA))
+            # 缩到窗口大小用 INTER_LINEAR: 预览只要看得清, 不必为画质多花几毫秒
+            # (缩小时 INTER_AREA 比 LINEAR 慢 2~3 倍, 而这里每帧都要做一次)。
+            pixmap = _to_pixmap(cv2.resize(frame, target, interpolation=cv2.INTER_LINEAR))
             if pixmap is None:
                 return
             self.last_seq = seq

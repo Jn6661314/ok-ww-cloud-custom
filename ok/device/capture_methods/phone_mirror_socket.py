@@ -117,6 +117,15 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         self._send_lock = threading.Lock()
         self._frame_lock = threading.Lock()
         self._frame_ready = threading.Event()
+        # 解码缓存: (frame_seq, 已裁剪归一化的 BGR 帧)。
+        #
+        # 预览窗口和任务会分别来取帧, 但它们要的是**同一帧**。以前每次取都重新
+        # 解一遍 NV12->BGR 再裁一遍缩一遍, 一帧要花十几毫秒; 两边各来一次, CPU
+        # 直接被吃满, 收帧线程抢不到 GIL, 内核侧的发送队列就堆起来 —— 表现出来
+        # 就是"画面延迟越来越大"。按 frame_seq 缓存后, 一帧只解码一次。
+        self._decoded_lock = threading.Lock()
+        self._decoded_seq = -1
+        self._decoded_frame = None
         # 最新一帧: (宽, 高, NV12 字节)
         self._raw = None
         self._raw_size = (0, 0)
@@ -245,12 +254,20 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
                 raise OSError('连接已关闭')
             head += chunk
         length = struct.unpack('<I', head[1:5])[0]
-        payload = b''
-        while len(payload) < length:
-            chunk = sock.recv(min(1 << 20, length - len(payload)))
-            if not chunk:
+        # 用 bytearray 原地扩展: 一帧 NV12 有 3~4MB, 用 bytes 的 += 会每块都
+        # 重新分配+整体拷贝一遍, 30fps 下白烧掉上百 MB/s 的内存带宽。
+        payload = bytearray(length)
+        view = memoryview(payload)
+        got = 0
+        while got < length:
+            try:
+                read = sock.recv_into(view[got:], min(1 << 20, length - got))
+            except (BlockingIOError, InterruptedError):
+                continue
+            if not read:
                 raise OSError('连接已关闭')
-            payload += chunk
+            got += read
+        view.release()
         return head[0], payload
 
     def _on_status(self, payload):
@@ -290,6 +307,9 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         with self._frame_lock:
             self._raw = None
             self._raw_size = (0, 0)
+        with self._decoded_lock:
+            self._decoded_seq = -1
+            self._decoded_frame = None
         self._frame_ready.clear()
 
     def _on_frame(self, payload):
@@ -310,6 +330,11 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
     # ------------------------------------------------------------------
 
     def do_get_frame(self):
+        # 同一个 frame_seq 只解码一次: 预览窗口和任务可能在同一帧上各来取一次。
+        seq = self.frame_seq
+        with self._decoded_lock:
+            if seq == self._decoded_seq and self._decoded_frame is not None:
+                return self._decoded_frame
         with self._frame_lock:
             raw = self._raw
             size = self._raw_size
@@ -318,7 +343,11 @@ class PhoneMirrorSocketCaptureMethod(BaseCaptureMethod):
         frame = self._to_bgr(raw, size)
         if frame is None:
             return None
-        return self.adapt_frame(frame)
+        frame = self.adapt_frame(frame)
+        with self._decoded_lock:
+            self._decoded_seq = seq
+            self._decoded_frame = frame
+        return frame
 
     def do_get_frame_wait(self, timeout):
         deadline = time.monotonic() + max(0.0, timeout)

@@ -1018,6 +1018,19 @@ class DeviceManager:
             self.capture_method = None
             return
         if engine.port is None:
+            # 这个引擎对象手里没有端口, 不代表内核没跑: ok-ww 重启过、或者上一次
+            # 启动流程被取消, 内核进程还活着但当前对象没接上它(日志里能看到"内核
+            # 就绪, 画面端口 xxxxx"和"还没就绪"交替刷屏)。start() 会先读 link.json,
+            # 端口还能连通就直接复用 —— 比干等 2 秒再报错有用得多。
+            # 只在这个引擎对象**从没**拉起过内核时自愈: 它的 process 是 None,
+            # 说明端口信息纯粹是丢了。process 有值(哪怕是刚崩的)就别在这里反复
+            # 重启 —— 那会让内核和手机端的「允许」提示刷屏。
+            if engine.process is None and not engine.running:
+                logger.info(f'手机投屏: 引擎没持有端口(id={id(engine)}), 尝试接回已在运行的内核')
+                try:
+                    engine.start()
+                except Exception as e:
+                    logger.debug(f'手机投屏: 自愈拉起投屏内核失败({e})')
             # 内核还活着 = 还在等手机上线 / 等手机上点「允许」, 多等一会儿;
             # 内核已经退了 = 没必要等, 直接把它报的原因说出来。
             timeout = 30.0 if engine.running else 2.0

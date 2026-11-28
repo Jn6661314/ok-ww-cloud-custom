@@ -72,6 +72,38 @@ class PreviewChannelTest(unittest.TestCase):
         capture._on_frame(payload)
         self.assertEqual(capture.frame_seq, 2)
 
+    def test_same_frame_is_decoded_only_once(self):
+        """预览和任务会来取同一帧, 不能各解码一遍(那是延迟的主要来源之一)。"""
+        capture = PhoneMirrorSocketCaptureMethod(45678)
+        w, h = 8, 8
+        payload = struct.pack('<III', w, h, w * h * 3 // 2) + bytes(w * h * 3 // 2)
+        capture._on_frame(payload)
+
+        with patch.object(PhoneMirrorSocketCaptureMethod, '_to_bgr',
+                          side_effect=PhoneMirrorSocketCaptureMethod._to_bgr) as decode:
+            first = capture.do_get_frame()
+            second = capture.do_get_frame()
+        self.assertIsNotNone(first)
+        self.assertIs(first, second, '同一 frame_seq 应该返回同一个解码结果')
+        self.assertEqual(decode.call_count, 1, '同一帧只应解码一次')
+
+        capture._on_frame(payload)  # 新的一帧
+        with patch.object(PhoneMirrorSocketCaptureMethod, '_to_bgr',
+                          side_effect=PhoneMirrorSocketCaptureMethod._to_bgr) as decode:
+            third = capture.do_get_frame()
+        self.assertEqual(decode.call_count, 1, '来新帧后必须重新解码')
+        self.assertIsNot(third, first)
+
+    def test_dropped_frame_clears_the_decode_cache(self):
+        capture = PhoneMirrorSocketCaptureMethod(45678)
+        w, h = 8, 8
+        payload = struct.pack('<III', w, h, w * h * 3 // 2) + bytes(w * h * 3 // 2)
+        capture._on_frame(payload)
+        self.assertIsNotNone(capture.do_get_frame())
+
+        capture._drop_frame()
+        self.assertIsNone(capture.do_get_frame(), '投屏断了不能继续吐旧画面')
+
 
 if __name__ == '__main__':
     unittest.main()
