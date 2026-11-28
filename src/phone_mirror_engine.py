@@ -316,6 +316,20 @@ class SidecarEngine:
         except Exception:
             return None
 
+    def read_link_pid(self):
+        """读上次写下的内核 pid。
+
+        Windows 上残留内核的命令行经常是空的(权限/父进程已退出),
+        find_engine_pids() 按命令行匹配会漏掉它; sidecar.json 里的 pid
+        又可能是内核自己换过的。link.json 是本进程写下的那份, 最可靠。
+        """
+        try:
+            data = json.loads(self.link_file.read_text(encoding='utf-8'))
+            pid = data.get('pid')
+            return int(pid) if isinstance(pid, int) and pid > 0 else None
+        except Exception:
+            return None
+
     def read_state(self):
         """读内核写的状态文件。"""
         try:
@@ -409,6 +423,10 @@ class SidecarEngine:
         pid = state.get('pid')
         if isinstance(pid, int) and pid > 0:
             pids.append(pid)
+        # link.json 是 ok-ww 自己写的那份, 就算内核命令行读不到也要清。
+        link_pid = self.read_link_pid()
+        if link_pid is not None:
+            pids.append(link_pid)
         pids.extend(self.find_engine_pids())
         for pid in dict.fromkeys(pids):
             if pid in own:
@@ -450,10 +468,15 @@ class SidecarEngine:
                     self._stop_locked()
                 else:
                     return True
-            existing = self.read_link()
+            # 配对模式绝不能复用旧内核: 旧内核不是用 --pair 起的, 不会输出
+            # pairing 消息, 配对窗口就永远停在"正在启动"、没有二维码。
+            # 而且旧内核的 stdout 属于上一个 ok-ww 进程, 新进程也读不到它的
+            # 状态 —— 哪怕它是普通内核, 界面也只会一片空白。
+            existing = None if self.pair else self.read_link()
             if existing and self.is_port_alive(existing):
                 # 上次那个引擎还活着: 直接连上, 免得每次都要在手机上点「允许」。
                 self.port = existing
+                self._mode = 'plain'
                 logger.info(f'手机投屏: 复用已在运行的投屏内核(端口 {existing})')
                 self._ready.set()
                 return True
@@ -464,6 +487,8 @@ class SidecarEngine:
                 logger.error(f'手机投屏: {e}')
                 return False
             # 上次留下的内核先清掉: 两个内核用同一个设备身份会互相干扰。
+            # 配对时尤其要做 —— 否则旧内核占着端口, 新配对内核起不来/起来了也
+            # 被手机当成两个设备, 二维码和配对码都收不到。
             self.kill_stale_engines()
             self.data_dir.mkdir(parents=True, exist_ok=True)
             flags = 0
