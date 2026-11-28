@@ -28,6 +28,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.28', 'v1.8.28 · 修好配对没二维码 / 任务启动报错 / Win10 云游戏闪退 + 新成品包 / Fix pairing, startup crash and Win10 cloud crash, new ready-to-run build', 'HEAD'),
     ('v1.8.27', 'v1.8.27 · 基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 解压即用的成品包 / Rebase onto v3.8.18, fix the 7 review findings, ship a ready-to-run build', 'HEAD'),
     ('v1.8.26', 'v1.8.26 · 手机投屏：按键变触点（键位校准）+ 电脑上能看手机画面 / Keys become touches (calibratable) and a preview window', 'HEAD'),
     ('v1.8.25', 'v1.8.25 · 手机投屏能连上但启动不了（抓屏通道异步连，框架问得太早）/ Fix "connected but cannot start": the capture channel connected a few ms too late', 'HEAD'),
@@ -92,6 +93,9 @@ PLAN = [
 # tag -> [(本地文件, 附件显示名)]; 只在发布时上传, 同名附件已存在会先删后传(幂等)。
 # 路径相对仓库根目录, 允许 ../ 指到仓库外(成品包不放进 git)。
 ASSETS = {
+    'v1.8.28': [
+        ('../_pkg/ok-ww-custom-v1.8.28-full.7z', 'ok-ww-custom-v1.8.28-full.7z'),
+    ],
     'v1.8.27': [
         ('../_pkg/ok-ww-custom-v1.8.27-full.7z', 'ok-ww-custom-v1.8.27-full.7z'),
     ],
