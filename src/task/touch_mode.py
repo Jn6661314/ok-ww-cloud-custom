@@ -35,6 +35,10 @@ TOUCH_MENU_BACK_KEY = '`'  # -> ADB_KEY_MAP -> KEYCODE_GRAVE (返回 = 打开菜
 # ---------------------------------------------------------------------------
 TOUCH_ACTIVITY_CLICK = (0.6813, 0.0602)
 TOUCH_BOOK_CLICK = (0.7293, 0.0612)
+# 手游指南书/面板右上角的关闭 X（实测 (2199,60)/(2376,1080)）。
+# 用户把菜单/返回键校准到了指南书图标附近，靠它关面板会关不掉，
+# 所以投屏下优先点这个固定的 X。
+TOUCH_PANEL_CLOSE_CLICK = (0.925, 0.056)
 
 
 class TouchMode:
@@ -118,6 +122,17 @@ class TouchMode:
     def open_menu(self, after_sleep=0):
         """打开/切换系统菜单。安卓端与返回是同一个按钮(键位表的 `)。"""
         self.back(after_sleep=after_sleep)
+
+    def close_panel(self, after_sleep=1):
+        """关掉当前打开的指南书/面板（仅手机投屏）。
+
+        手游面板右上角有固定 X，而「菜单/返回」是用户自己校准的触点，实测可能
+        落在指南书图标上导致关不掉。这里直接点 X，并在主界面安全跳过。
+        """
+        if not self.is_phone_mirror:
+            return False
+        self.task.click_relative(*TOUCH_PANEL_CLOSE_CLICK, after_sleep=after_sleep)
+        return True
 
     def open_book(self, after_sleep=4):
         """打开索拉指南。投屏优先点用户校准的 F2 触点; 没校准仍点右上角图标栏

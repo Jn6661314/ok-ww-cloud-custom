@@ -32,6 +32,10 @@ ANDROID_ACTIVITY_TRACE_RE = re.compile(r'活跃行迹|活躍行跡|每日活跃|
 ANDROID_DAILY_PROGRESS_RE = re.compile(r'(\d{1,3})\s*[/／]\s*180')
 ANDROID_DAILY_POINTS_RE = re.compile(r'(\d{1,3})\s*[/／]\s*(100|200)')
 ANDROID_ACTIVITY_PAGE_RE = re.compile(r'活跃度|活躍度')
+# 实测手游「活跃行迹」页的当前活跃度是单独一个数字(如 120)，下面才是「活跃度」
+# 标签和 20/40/60/80/100 里程碑 —— 没有 PC 的 "120/100" 形式。单靠分母 regex
+# 必然读不到，因此额外接受纯数字，并用它与「活跃度」标签的距离排除里程碑。
+ANDROID_DAILY_POINTS_FREE_RE = re.compile(r'^\s*(\d{1,3})\s*$')
 CULTIVATION_TARGET = 'Cultivation Target'
 
 
@@ -334,22 +338,17 @@ class DailyTask(EchoBoxMixin, WWOneTimeTask, BaseCombatTask):
     def open_daily(self):
         self.log_info(self.tr('open_daily'))
         self.openF2Book("gray_book_quest")
-        self.click(0.17, 0.12, after_sleep=1)
+        touch = getattr(self, 'touch', None)
+        is_touch = bool(touch is not None and touch.is_touch)
+        if not is_touch:
+            # PC/云游戏的征程页要用这个坐标切到活跃行迹；手游页左侧图标栏里
+            # 这个点落在内容区，反而会把已打开的活跃行迹页切走。
+            self.click(0.17, 0.12, after_sleep=1)
+        current = None
         if self.is_adb():
-            # 手游端: 先确认"活跃行迹"子页打开, 再用宽域 OCR 读进度
-            # (PC 的 (0.1,0.1,0.5,0.75) + ^x/180$ 在手游布局下读不到)
+            # 手游端: 先确认"活跃行迹"子页打开。手游页没有 x/180 读数，
+            # current 改由活跃度点数推导(见下面)，别再拿 /180 的 regex 硬读。
             self._android_open_activity_trace()
-            progress = self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_DAILY_PROGRESS_RE,
-                                name='android_daily_progress')
-            if not progress:
-                self.click(0.974, 0.6, after_sleep=1)
-                progress = self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_DAILY_PROGRESS_RE,
-                                    name='android_daily_progress')
-            if progress:
-                m = ANDROID_DAILY_PROGRESS_RE.search(progress[0].name)
-                current = int(m.group(1)) if m else 0
-            else:
-                current = 0
         else:
             progress = self.ocr(0.1, 0.1, 0.5, 0.75, match=re.compile(r'^(\d+)/180$'))
             if not progress:
@@ -359,11 +358,17 @@ class DailyTask(EchoBoxMixin, WWOneTimeTask, BaseCombatTask):
                 current = int(progress[0].name.split('/')[0])
             else:
                 current = 0
-        self.info_set('current daily progress', current)
         self._daily_points_unknown = False
         points = self.get_total_daily_points()
         # 识别失败绝不能当成 0, 否则活跃度已满还会白刷一遍体力.
         daily_reward_ready = points is not None and points >= 100
+        if current is None:
+            # 手游「活跃行迹」页不显示 x/180; 活跃度满了就当体力进度已满，
+            # 没满但读数可信时留给后续的体力任务补足。
+            current = 180 if daily_reward_ready else 0
+        self.info_set('current daily progress', current)
+        if is_touch and touch is not None and getattr(touch, 'is_phone_mirror', False):
+            touch.close_panel()
         return current, daily_reward_ready
         # 请注意：如果任务【累计消耗180点结晶波片】已完成，current 也可能为 0，因为翻页后也有可能识别不到已用体力。
 
@@ -375,18 +380,24 @@ class DailyTask(EchoBoxMixin, WWOneTimeTask, BaseCombatTask):
         点击落空也只是点到内容区, 不会产生副作用。
         """
         deadline = time.time() + time_out
+        # 手游指南书左侧是纯图标栏(没有文字可 OCR)。实测第一个图标
+        # (画面 2376x1080 下的 (148,180)) 就是「活跃行迹」。
+        left_tab = (0.062, 0.17)
         while True:
-            if self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_ACTIVITY_PAGE_RE,
+            if self.ocr(0.0, 0.0, 1.0, 1.0, match=ANDROID_ACTIVITY_PAGE_RE,
                         name='android_activity_page'):
                 return True
-            tab = self.ocr(0.0, 0.0, 0.7, 0.4, match=ANDROID_ACTIVITY_TRACE_RE,
+            tab = self.ocr(0.0, 0.0, 1.0, 0.4, match=ANDROID_ACTIVITY_TRACE_RE,
                            name='android_activity_tab')
             if tab:
                 self.log_info(self.tr('click 活跃行迹 tab (android)'))
                 self.click(tab[0], after_sleep=1)
-                if self.ocr(0.0, 0.05, 0.9, 0.95, match=ANDROID_ACTIVITY_PAGE_RE,
-                            name='android_activity_page'):
-                    return True
+            else:
+                self.log_info(self.tr('click left guidebook tab 1 (android)'))
+                self.click_relative(*left_tab, after_sleep=1)
+            if self.ocr(0.0, 0.0, 1.0, 1.0, match=ANDROID_ACTIVITY_PAGE_RE,
+                        name='android_activity_page'):
+                return True
             if time.time() >= deadline:
                 self.log_warning(self.tr('安卓端未找到「活跃行迹」页签, 活跃度可能识别失败'))
                 return False
@@ -429,34 +440,49 @@ class DailyTask(EchoBoxMixin, WWOneTimeTask, BaseCombatTask):
         return None
 
     def _android_total_daily_points(self):
-        """手游端活跃行迹页: 布局与 PC 不同, 全页 OCR 找 x/100 形式的活跃度读数。
+        """手游端活跃行迹页: 读当前活跃度点数。
 
-        页面上可能有多个 x/N 计数(任务进度 x/5 等), 用分母限定 100/200 过滤;
-        有多个候选时优先取与"活跃度"文字垂直距离最近的那个。
+        手游页实测把点数显示成单独一个数字(如 120)，下面是「活跃度」标签和
+        20/40/60/80/100 里程碑；只有里程碑格子里才有 x/100 文字。所以先按
+        老布局找 x/100，再退回"纯数字 + 离底部'活跃度'标签最近"，用距离
+        排除里程碑数字(它们离标签水平方向远得多)。
         """
-        regions = [(0.0, 0.05, 0.9, 0.95), (0.0, 0.3, 0.6, 0.95)]
+        regions = [(0.0, 0.05, 1.0, 1.0), (0.0, 0.3, 0.7, 1.0)]
         for _ in range(3):
             for region in regions:
+                anchors = self.ocr(*region, match=ANDROID_ACTIVITY_PAGE_RE,
+                                   name='android_activity_anchor')
+                # 「活跃度」在页面顶部页签和底部标签各出现一次；底部那个才是
+                # 点数的标签，顶部页签离里程碑很远，参与选择会选错。
+                bottom_anchors = [a for a in anchors if a.y > 0.7 * self.height] or anchors
                 boxes = self.ocr(*region, match=ANDROID_DAILY_POINTS_RE,
                                  name='android_daily_points')
-                if not boxes:
-                    continue
                 candidates = []
                 for box in boxes:
                     m = ANDROID_DAILY_POINTS_RE.search(box.name)
                     if not m:
                         continue
                     points, total = int(m.group(1)), int(m.group(2))
-                    if not 0 <= points <= total:
-                        continue
-                    candidates.append((points, box))
+                    if 0 <= points <= total:
+                        candidates.append((points, box))
+                if not candidates:
+                    free = self.ocr(*region, match=ANDROID_DAILY_POINTS_FREE_RE,
+                                    name='android_daily_points_free')
+                    for box in free:
+                        m = ANDROID_DAILY_POINTS_FREE_RE.match(box.name)
+                        if not m:
+                            continue
+                        points = int(m.group(1))
+                        if 0 <= points <= 200:
+                            candidates.append((points, box))
                 if not candidates:
                     continue
-                chosen = candidates[0]
-                anchor = self.ocr(*region, match=ANDROID_ACTIVITY_PAGE_RE,
-                                  name='android_activity_anchor')
-                if anchor:
-                    chosen = min(candidates, key=lambda pc: abs(pc[1].y - anchor[0].y))
+                if bottom_anchors:
+                    chosen = min(candidates, key=lambda pc: min(
+                        (pc[1].x - a.x) ** 2 + (pc[1].y - a.y) ** 2
+                        for a in bottom_anchors))
+                else:
+                    chosen = candidates[0]
                 points = chosen[0]
                 self.info_set('total daily points', points)
                 return points
@@ -503,6 +529,11 @@ class DailyTask(EchoBoxMixin, WWOneTimeTask, BaseCombatTask):
             self.click(0.885, 0.250, after_sleep=2)
         self.log_info(self.tr('claim daily reward via  coordinate'))
         self.click(0.930, 0.882, after_sleep=1)
+        touch = getattr(self, 'touch', None)
+        if touch is not None and getattr(touch, 'is_phone_mirror', False):
+            # 领完奖励还停在指南书里；用户校准的返回键可能落在指南书图标上，
+            # 直接点面板右上角的 X 才关得掉。
+            touch.close_panel(after_sleep=1)
         self.ensure_main(time_out=10)
 
     def claim_mail(self):
