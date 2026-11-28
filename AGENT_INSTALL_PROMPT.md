@@ -39,14 +39,19 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    因为安装清单在 restore.py 里）。
 4. 运行安装脚本：
    python tools/install_to_local_app.py
-   如果提示找不到 working 目录，请让我提供实际路径，然后带参数重跑：
-   python tools/install_to_local_app.py "你的working目录路径"
+   **如果 ok-ww 装在非系统盘（D:/E:/F: 等），不要靠默认路径**：脚本默认只找
+   `%LOCALAPPDATA%/ok-ww/...`，装在别的盘它会报 "Not installed" 然后失败。
+   这种情况直接问我要实际路径，带参数重跑（路径含空格要加引号）：
+   python tools/install_to_local_app.py "E:/ok-ww/data/apps/ok-ww/working"
+   路径形如 `<装 ok-ww 的盘>/ok-ww/data/apps/ok-ww/working`，末尾就是 working，
+   不要写到 ok-ww.exe 那一层，也不要把 working 漏掉。若已开记事本在改路径，
+   告诉用户不用改任何 .py，只需把上面的实际路径作为参数传给脚本即可。
 5. 脚本自动完成：把全部定制文件复制到 working 与 repo 两个目录、放入工坊离线缓存，
    并把被改文件备份为 .pre-cloud 后缀。请勿手动改动 Cookie、MultiAccountConfig.json、
    自定义队伍文件。
    脚本结束会打印 "Done: N file copies across 2 directories."（N = 定制文件数 × 2，
    当前清单 46 个文件时是 92），请确认这一行出现。数字随仓库清单变化属正常。
-6. 启动 ok-ww，做三项确认：
+6. 启动 ok-ww，做以下确认：
    a. 设备下拉里选「云游戏」，任务列表里**仍然只有一个日常任务**和一个多账号任务
       （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类
       重复任务）；多账号任务的设置页在云设备下会多出「保存登录状态」「切换账号」
@@ -93,6 +98,21 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
       working/src/cloud_browser.py、working/src/stream_window.py、working/src/globals.py、
       working/src/task/BaseWWTask.py、working/ok/device/DeviceManager.py、working/config.py
       等是否存在且内容较新。
+   b2. 用户报"云游戏浏览器一打开就闪退 / Win10 打开闪退"：本补丁已把云游戏默认
+      分辨率从 1920x1080 改成 1600x900（config.py 里 browser 的 resolution），
+      不用再让用户用记事本改 config.py。若仍闪退，确认装的是本补丁的 config.py
+      （里面 browser.resolution 应为 (1600, 900)），再重跑 restore 并重启。
+      1600x900 是官方支持的 16:9 档位，识别照常；Win11 想用 1080p 可自行改回。
+   b3. 用户报"装完还是官方版 / 启动后定制没了"：这是官方启动器
+      （pyappify）把补丁刷回官方所致，先按上面【启动器为什么会把定制刷回官方】
+      处理：关闭 ok-ww → 重跑 `python restore.py`（已在仓库根目录）→ 再启动。
+      不要让用户用记事本手改配置里的启动项。若用户想要一个"不依赖官方启动器、
+      不会再被还原"的启动方式，用下面这条命令直接跑内置 Python
+      （把 `<装 ok-ww 的目录>` 换成实际路径，如 `E:\ok-ww`）：
+        cmd /c start "" /D "<目录>\data\apps\ok-ww\working" "<目录>\data\apps\ok-ww\python\pythonw.exe" main.py
+      这条命令等价于双击成品包里的 ok-ww.exe：cwd 设为 working、用自带 pythonw
+      跑 main.py，全程不碰 git 和 app.json，官方启动器不会介入。也可以把它存成
+      一个 .bat 放到 ok-ww 根目录，以后都从它启动，避免官方启动器再覆盖补丁。
    c. 「保存登录状态 / 切换账号」只在设备选「云游戏」时出现——选成 PC 或安卓时不显示，
       这是设计行为，不是 bug。
    d. UID 遮罩由框架的 blur 机制实现，需要在设置里勾选「Enable Blur」（默认 Inpaint）。

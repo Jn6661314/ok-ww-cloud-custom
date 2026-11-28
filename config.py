@@ -450,7 +450,10 @@ config = {
     },
     'browser': {
         'url': 'https://mc.kurogames.com/cloud/#/',
-        'resolution': (1920, 1080),
+        # Win10 上把 viewport 设到 1920x1080 再开 WebRTC 抓屏, Chromium 会直接闪退;
+        # 1600x900 同样是官方 supported_resolution 列明的 16:9 档位, 不闪退且识别照常
+        # (模板按帧宽高等比缩放)。确需 1080p 的 Win11 用户可自行改回 (1920, 1080)。
+        'resolution': (1600, 900),
         'channels': ['msedge', 'chrome', 'chromium'],
         'capture': 'webrtc',
         # Keep SDR video in the compositor; direct video overlays clip WGC colors on HDR displays.
