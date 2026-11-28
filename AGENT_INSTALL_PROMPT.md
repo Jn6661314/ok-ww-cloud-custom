@@ -45,7 +45,7 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    并把被改文件备份为 .pre-cloud 后缀。请勿手动改动 Cookie、MultiAccountConfig.json、
    自定义队伍文件。
    脚本结束会打印 "Done: N file copies across 2 directories."（N = 定制文件数 × 2，
-   当前清单 45 个文件时是 90），请确认这一行出现。数字随仓库清单变化属正常。
+   当前清单 46 个文件时是 92），请确认这一行出现。数字随仓库清单变化属正常。
 6. 启动 ok-ww，做三项确认：
    a. 设备下拉里选「云游戏」，任务列表里**仍然只有一个日常任务**和一个多账号任务
       （官方 v3.8.15 起按所选设备自动区分操作，不会出现「云每日」「云多账号」这类
@@ -89,7 +89,7 @@ adbutils 等依赖，跑脚本时会报 ModuleNotFoundError: adbutils，看起�
    a. 确认版本对得上：本补丁以官方 v3.8.18 为基线。若用户装的是
       更老的官方版（如 v3.8.15），先让用户把官方 ok-ww 更新到 v3.8.18 再装补丁
       （或者直接让用户下 Release 里的 `ok-ww-custom-vX.Y.Z-full.7z` 成品包，一步到位）。
-   b. 确认装齐 45 个文件：working/src/task/MultiAccountDailyTask.py、
+   b. 确认装齐 46 个文件：working/src/task/MultiAccountDailyTask.py、
       working/src/cloud_browser.py、working/src/stream_window.py、working/src/globals.py、
       working/src/task/BaseWWTask.py、working/ok/device/DeviceManager.py、working/config.py
       等是否存在且内容较新。

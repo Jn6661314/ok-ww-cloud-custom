@@ -21,7 +21,7 @@ Rust 业务内核 + Qt 界面，基线为 ok-ww-enhanced 与老版 ok-script）�
 
 ### 2026-11-28
 
-- **[v1.8.27](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.27)** — **基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 第一次给「解压即用」的绿色成品包**：定制层从 v3.8.15 rebase 到 v3.8.18，上游新增的 `child_session` 与本地 `adb` 入口并存；7 条评审问题（锁敌重试要血条正向证据、跳过聚落仍找残象、无尽判定只认正则、云多账号配置隔离、`_replace_dir` 跨盘回滚、`_is_cloud_device` 回落 `config['preferred']`、`_run_cloud_account` 分开两种 None）全部修掉，Python 全量 **481 项通过**。绿色包 `ok-ww-custom-v1.8.27-full.7z` 用自建 134KB 轻量启动器直接跑内置 Python，**不碰 git**，解决官方 pyappify 启动器「一打开就把定制补丁还原」的问题；不含任何账号/Cookie/配置/日志。**同日追加**：手机投屏不再自动弹预览窗口，预览窗口也去掉实时画面、只保留连接状态（不再多占一条视频流）。需重跑 `restore.py` 并重启 ok-ww；或直接下载绿色包解压双击 `ok-ww.exe`。
+- **[v1.8.27](https://github.com/Jn6661314/ok-ww-cloud-custom/releases/tag/v1.8.27)** — **基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 第一次给「解压即用」的绿色成品包**：定制层从 v3.8.15 rebase 到 v3.8.18，上游新增的 `child_session` 与本地 `adb` 入口并存；7 条评审问题（锁敌重试要血条正向证据、跳过聚落仍找残象、无尽判定只认正则、云多账号配置隔离、`_replace_dir` 跨盘回滚、`_is_cloud_device` 回落 `config['preferred']`、`_run_cloud_account` 分开两种 None）全部修掉，Python 全量 **481 项通过**。绿色包 `ok-ww-custom-v1.8.27-full.7z` 用自建 134KB 轻量启动器直接跑内置 Python，**不碰 git**，解决官方 pyappify 启动器「一打开就把定制补丁还原」的问题；不含任何账号/Cookie/配置/日志。**同日追加**：手机投屏不再自动弹预览窗口（点按钮才开，窗口仍是实时画面）；截图一律不再落盘到 screenshots/。需重跑 `restore.py` 并重启 ok-ww；或直接下载绿色包解压双击 `ok-ww.exe`。
 
 ### 2026-11-27
 
@@ -201,8 +201,8 @@ MuMu / 安卓定制、无尽模式、详情页直接开始、玩法说明弹窗�
 
    也可传自定义 working 路径：`python tools/install_to_local_app.py "D:/path/to/working"`。
 
-   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 45 个）复制到 `working` 与
-   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 90）
+   脚本会把 `restore.py::RELATIVE_FILES` 里的**全部定制文件**（当前 46 个）复制到 `working` 与
+   `repo` 两处，结束时打印 `Done: N file copies across 2 directories.`（N = 文件数 × 2，当前应为 92）
    —— 确认这一行出现，说明装齐了；数字随清单变化属正常，以脚本实际输出为准。
 
 5. 打开 ok-ww，做三项确认：

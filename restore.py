@@ -84,6 +84,8 @@ RELATIVE_FILES = [
     'ok/device/capture_methods/windows_graphics.py',
     'ok/device/interaction_methods/keys.py',
     'ok/util/window.py',
+    # 截图一律不落盘：保留实时预览/画框，但不往 screenshots/ 写文件
+    'ok/core/screenshot.py',
     # 云鸣潮：每个账号一个浏览器 profile（纯 okww 侧目录切换，不改框架）
     'src/cloud_browser.py',
     'src/cloud_recovery.py',

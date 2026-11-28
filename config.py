@@ -57,13 +57,7 @@ def _start_phone_mirror_engine():
     engine = get_engine()
     engine.pair = False
     if engine.start():
-        logger.info('手机投屏: 内核已启动, 等手机上点「允许」。')
-        # 顺手把画面窗口开出来: 手机上点「允许」之后就能看到画面。
-        try:
-            from src.phone_mirror_preview import show_preview
-            show_preview(engine)
-        except Exception as e:
-            logger.debug(f'手机投屏: 打开预览窗口失败({e})')
+        logger.info('手机投屏: 内核已启动, 等手机上点「允许」。需要看画面时点「预览手机画面」。')
         return True
     return False
 
@@ -343,7 +337,7 @@ phone_mirror_option = ConfigOption('手机投屏', {
        '配对手机': {'type': 'button', 'text': '配对手机(扫码)', 'callback': _open_phone_mirror_pairing},
        '启动投屏内核': {'type': 'button', 'text': '启动投屏内核', 'callback': _start_phone_mirror_engine},
        '校准键位': {'type': 'button', 'text': '校准键位(点屏幕)', 'callback': _open_phone_mirror_keymap},
-       '预览画面': {'type': 'button', 'text': '投屏状态', 'callback': _open_phone_mirror_preview},
+       '预览画面': {'type': 'button', 'text': '预览手机画面', 'callback': _open_phone_mirror_preview},
        '下载手机端': {'type': 'button', 'text': '下载手机端(网盘)', 'callback': _open_phone_mirror_apk},
        '模式': {'type': 'drop_down', 'options': [MODE_ENGINE, MODE_DESKTOP]},
        '画面宽度': {'type': 'drop_down', 'options': ['1280', '1600', '1920', '2560']},
@@ -362,7 +356,7 @@ phone_mirror_option = ConfigOption('手机投屏', {
        '校准键位': '打开投屏画面, 逐个点一下「菜单/返回」「切人 1/2/3」「技能 E」等按钮的位置, '
                    'ok-ww 就学会把这些键变成手机触点。手游不认按键事件, 不做这一步'
                    '只有「菜单/返回」能用(位置固定), 技能/切人都会没反应',
-       '预览画面': '打开投屏状态窗口(只显示连接状态/窗口置顶, 不显示手机画面); 投屏时不会自动弹窗',
+       '预览画面': '手动打开一个窗口显示手机实时画面(可置顶); 启动投屏/跑任务时不会自动弹出',
        '下载手机端': '点击打开网盘, 下载 NectarLink 的 Android 客户端(安装到手机上)',
        '手机端下载地址': '手机端客户端的下载地址(网盘分享, 含提取码)。默认已填好, 可自行替换',
    }, show_at_tab=True, icon='monitor')
@@ -499,6 +493,8 @@ config = {
     </p>
 """,
     'screenshots_folder': "screenshots",
+    # 定制：截图一律不落盘（实时预览与画框不受影响）。改回 False 可恢复官方行为。
+    'disable_screenshot_saving': True,
     'gui_title': 'OK-WW',  # Optional
     'game_name': 'Wuthering Waves',
     # 'coco_feature_folder': get_path(__file__, 'assets/coco_feature'),  # required if using feature detection
