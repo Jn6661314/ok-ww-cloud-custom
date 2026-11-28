@@ -28,6 +28,7 @@ RELEASES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # git tag -> (release 标题, 目标 commit)
 PLAN = [
+    ('v1.8.30', 'v1.8.30 · 手机投屏：修好「点开始没反应」和画面越来越卡，补齐斩杀/索拉指南/先约电台触点 / Phone mirroring: fix "won\'t start" and growing lag, add break / guidebook / battle-pass touch points', 'HEAD'),
     ('v1.8.29', 'v1.8.29 · 关掉 ok-ww 后投屏内核不再残留 + 手动关闭按钮 / Mirroring engine no longer lingers after ok-ww exits', 'HEAD'),
     ('v1.8.28', 'v1.8.28 · 修好配对没二维码 / 任务启动报错 / Win10 云游戏闪退 + 新成品包 / Fix pairing, startup crash and Win10 cloud crash, new ready-to-run build', 'HEAD'),
     ('v1.8.27', 'v1.8.27 · 基线升到官方 v3.8.18 + 修掉上游评审的 7 个问题 + 解压即用的成品包 / Rebase onto v3.8.18, fix the 7 review findings, ship a ready-to-run build', 'HEAD'),
@@ -94,6 +95,9 @@ PLAN = [
 # tag -> [(本地文件, 附件显示名)]; 只在发布时上传, 同名附件已存在会先删后传(幂等)。
 # 路径相对仓库根目录, 允许 ../ 指到仓库外(成品包不放进 git)。
 ASSETS = {
+    'v1.8.30': [
+        ('../_pkg/ok-ww-custom-v1.8.30-full.7z', 'ok-ww-custom-v1.8.30-full.7z'),
+    ],
     'v1.8.29': [
         ('../_pkg/ok-ww-custom-v1.8.29-full.7z', 'ok-ww-custom-v1.8.29-full.7z'),
     ],
